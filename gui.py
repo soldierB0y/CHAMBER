@@ -70,6 +70,9 @@ class ChamberApp(ctk.CTk):
         self.api_server = None
         self.log_lines = []
         self.gadget_window = None
+        self.gadget_mode = False
+        self._last_stats_snapshot = None
+        self.gadget_chat_messages = []
 
         self._build_ui()
         self._populate_providers()
@@ -942,9 +945,14 @@ class ChamberApp(ctk.CTk):
 
             self.stats_provider_widgets[pid] = card
 
-    def _refresh_stats_tab(self):
+    def _refresh_stats_tab(self, auto=False):
         """Refresh all stats displays."""
         all_stats = {pid: get_stats(self.config_data, pid) for pid in PROVIDERS}
+        snapshot = self._stats_snapshot(all_stats)
+        if auto and snapshot == self._last_stats_snapshot:
+            return
+        self._last_stats_snapshot = snapshot
+
         total_req = sum(s["requests"] for s in all_stats.values())
         total_err = sum(s["errors"] for s in all_stats.values())
         total_tok = sum(s.get("total_tokens", 0) for s in all_stats.values())
@@ -960,6 +968,20 @@ class ChamberApp(ctk.CTk):
         self._build_stats_provider_cards()
 
     @staticmethod
+    def _stats_snapshot(all_stats):
+        """Build a compact immutable snapshot to detect visible stats changes."""
+        return tuple(
+            (pid,
+             s.get("requests", 0),
+             s.get("errors", 0),
+             s.get("total_tokens", 0),
+             s.get("prompt_tokens", 0),
+             s.get("completion_tokens", 0),
+             s.get("last_error", ""))
+            for pid, s in sorted(all_stats.items())
+        )
+
+    @staticmethod
     def _fmt_tokens(n):
         """Format token count for display."""
         if n >= 1_000_000:
@@ -968,24 +990,29 @@ class ChamberApp(ctk.CTk):
             return f"{n / 1_000:.1f}K"
         return str(n)
 
-        self._build_stats_provider_cards()
-
     # ── GADGET MODE ───────────────────────────────────────────
 
     def _toggle_gadget(self):
-        """Toggle the floating mini-widget."""
-        if self.gadget_window and self.gadget_window.winfo_exists():
-            self.gadget_window.destroy()
-            self.gadget_window = None
+        """Switch between normal mode and gadget-only mode."""
+        if self.gadget_mode:
+            self._exit_gadget_mode()
+            return
+        self._enter_gadget_mode()
+
+    def _enter_gadget_mode(self):
+        """Hide normal window and show floating gadget."""
+        if self.gadget_mode:
             return
 
+        self.gadget_mode = True
         gw = ctk.CTkToplevel(self)
         gw.title("Chamber")
-        gw.geometry("280x180")
+        gw.geometry("350x420")
         gw.resizable(False, False)
         gw.attributes("-topmost", True)
         gw.configure(fg_color=C["bg"])
         gw.overrideredirect(True)  # Borderless
+        gw.protocol("WM_DELETE_WINDOW", self._exit_gadget_mode)
 
         # Make draggable
         gw._drag_x = 0
@@ -1000,9 +1027,6 @@ class ChamberApp(ctk.CTk):
             y = gw.winfo_y() + e.y - gw._drag_y
             gw.geometry(f"+{x}+{y}")
 
-        gw.bind("<Button-1>", start_drag)
-        gw.bind("<B1-Motion>", do_drag)
-
         # Main container with rounded border
         container = ctk.CTkFrame(gw, fg_color=C["surface"], corner_radius=16,
                                  border_width=1, border_color=C["border"])
@@ -1011,6 +1035,8 @@ class ChamberApp(ctk.CTk):
         # Header row: logo + title + close
         header = ctk.CTkFrame(container, fg_color="transparent")
         header.pack(fill="x", padx=12, pady=(10, 4))
+        header.bind("<Button-1>", start_drag)
+        header.bind("<B1-Motion>", do_drag)
 
         if self._logo_icon:
             ctk.CTkLabel(header, image=self._logo_icon, text="").pack(side="left", padx=(0, 6))
@@ -1025,7 +1051,7 @@ class ChamberApp(ctk.CTk):
             font=ctk.CTkFont(size=12),
             fg_color="transparent", hover_color=C["card_hover"],
             text_color=C["text_dim"], corner_radius=6,
-            command=lambda: (gw.destroy(), setattr(self, 'gadget_window', None))
+            command=self._exit_gadget_mode
         ).pack(side="right")
 
         ctk.CTkButton(
@@ -1033,7 +1059,7 @@ class ChamberApp(ctk.CTk):
             font=ctk.CTkFont(size=12),
             fg_color="transparent", hover_color=C["card_hover"],
             text_color=C["text_dim"], corner_radius=6,
-            command=lambda: (self.deiconify(), self.lift())
+            command=self._exit_gadget_mode
         ).pack(side="right", padx=2)
 
         # Status row
@@ -1083,9 +1109,53 @@ class ChamberApp(ctk.CTk):
         )
         self._gadget_errs.pack(side="left", padx=(16, 0))
 
+        total_tok = sum(s.get("total_tokens", 0) for s in all_stats.values())
+        self._gadget_tokens = ctk.CTkLabel(
+            stats_row, text=f"◈ {self._fmt_tokens(total_tok)}",
+            font=ctk.CTkFont(size=12), text_color=C["accent"]
+        )
+        self._gadget_tokens.pack(side="left", padx=(16, 0))
+
+        # Mini chatbot
+        chat_frame = ctk.CTkFrame(container, fg_color="transparent")
+        chat_frame.pack(fill="both", expand=True, padx=12, pady=(4, 4))
+
+        self._gadget_chat_box = ctk.CTkTextbox(
+            chat_frame,
+            font=ctk.CTkFont(size=11),
+            fg_color=C["input_bg"], text_color=C["text"],
+            corner_radius=8, border_width=1, border_color=C["border"],
+            wrap="word"
+        )
+        self._gadget_chat_box.pack(fill="both", expand=True)
+        self._gadget_chat_box.configure(state="disabled")
+
+        gadget_input_row = ctk.CTkFrame(chat_frame, fg_color="transparent")
+        gadget_input_row.pack(fill="x", pady=(6, 0))
+
+        self._gadget_chat_input = ctk.CTkEntry(
+            gadget_input_row,
+            placeholder_text="Mensaje...",
+            height=32,
+            font=ctk.CTkFont(size=11),
+            fg_color=C["input_bg"], border_color=C["border"],
+            text_color=C["text"], corner_radius=8
+        )
+        self._gadget_chat_input.pack(side="left", fill="x", expand=True)
+        self._gadget_chat_input.bind("<Return>", lambda e: self._send_gadget_message())
+
+        self._gadget_send_btn = ctk.CTkButton(
+            gadget_input_row, text="Enviar", width=62, height=32,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color=C["accent"], hover_color=C["accent_hover"],
+            text_color="#fff", corner_radius=8,
+            command=self._send_gadget_message
+        )
+        self._gadget_send_btn.pack(side="left", padx=(6, 0))
+
         # Bottom bar with quick actions
         bottom = ctk.CTkFrame(container, fg_color="transparent")
-        bottom.pack(fill="x", padx=12, pady=(0, 8))
+        bottom.pack(fill="x", padx=12, pady=(4, 8))
 
         ctk.CTkButton(
             bottom, text="▶", width=36, height=28,
@@ -1103,7 +1173,18 @@ class ChamberApp(ctk.CTk):
         ).pack(side="left")
 
         self.gadget_window = gw
+        self.withdraw()
         self._update_gadget()
+
+    def _exit_gadget_mode(self):
+        """Close gadget and restore normal window."""
+        self.gadget_mode = False
+        if self.gadget_window and self.gadget_window.winfo_exists():
+            self.gadget_window.destroy()
+        self.gadget_window = None
+        self.deiconify()
+        self.lift()
+        self.focus_force()
 
     def _update_gadget(self):
         """Update gadget widget with current status."""
@@ -1128,10 +1209,56 @@ class ChamberApp(ctk.CTk):
         all_stats = {pid: get_stats(self.config_data, pid) for pid in PROVIDERS}
         total_req = sum(s["requests"] for s in all_stats.values())
         total_err = sum(s["errors"] for s in all_stats.values())
+        total_tok = sum(s.get("total_tokens", 0) for s in all_stats.values())
         self._gadget_reqs.configure(text=f"✓ {total_req}")
         self._gadget_errs.configure(text=f"✗ {total_err}")
+        self._gadget_tokens.configure(text=f"◈ {self._fmt_tokens(total_tok)}")
 
         self.gadget_window.after(2000, self._update_gadget)
+
+    def _append_gadget_chat(self, speaker, text):
+        """Append a chat line to the gadget chat box."""
+        if not self.gadget_window or not self.gadget_window.winfo_exists():
+            return
+        self._gadget_chat_box.configure(state="normal")
+        self._gadget_chat_box.insert("end", f"{speaker}: {text}\n\n")
+        self._gadget_chat_box.see("end")
+        self._gadget_chat_box.configure(state="disabled")
+
+    def _send_gadget_message(self):
+        """Send a chat message from gadget mode."""
+        if not self.gadget_window or not self.gadget_window.winfo_exists():
+            return
+        text = self._gadget_chat_input.get().strip()
+        if not text:
+            return
+        if not self.roulette:
+            self._append_gadget_chat("Sistema", "Inicia el servidor primero")
+            return
+
+        self._gadget_chat_input.delete(0, "end")
+        self._gadget_send_btn.configure(state="disabled", text="...")
+        self.gadget_chat_messages.append({"role": "user", "content": text})
+        self._append_gadget_chat("Tu", text)
+
+        payload_messages = list(self.gadget_chat_messages)
+
+        def do_request():
+            try:
+                result = self.roulette.chat_completion(payload_messages)
+                if "error" in result and "choices" not in result:
+                    err = result["error"].get("message", "Error desconocido")
+                    self.after(0, lambda: self._append_gadget_chat("Sistema", f"Error: {err}"))
+                else:
+                    content = result["choices"][0]["message"]["content"]
+                    self.gadget_chat_messages.append({"role": "assistant", "content": content})
+                    self.after(0, lambda c=content: self._append_gadget_chat("AI", c))
+            except Exception as e:
+                self.after(0, lambda: self._append_gadget_chat("Sistema", f"Error: {e}"))
+            finally:
+                self.after(0, lambda: self._gadget_send_btn.configure(state="normal", text="Enviar"))
+
+        threading.Thread(target=do_request, daemon=True).start()
 
     # ══════════════════════════════════════════════════════════
     #  SERVER CONTROL
@@ -1241,6 +1368,8 @@ class ChamberApp(ctk.CTk):
 
     def _update_status_loop(self):
         self._update_status()
+        if hasattr(self, "stats_summary_labels") and self.current_tab == "stats":
+            self._refresh_stats_tab(auto=True)
         if self.gadget_window and self.gadget_window.winfo_exists():
             self._update_gadget()
         self.after(2000, self._update_status_loop)
