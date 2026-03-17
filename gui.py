@@ -1623,6 +1623,9 @@ class ChamberApp(ctk.CTk):
 
         port = int(self.port_entry.get() or 11411)
         self.config_data["server_port"] = port
+        save_config(self.config_data)
+        if hasattr(self, "port_display_label"):
+            self.port_display_label.configure(text=str(port))
 
         self.roulette = Roulette(
             self.config_data,
