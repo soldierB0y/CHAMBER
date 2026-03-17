@@ -1,0 +1,1353 @@
+"""
+Interfaz gráfica de escritorio para Chamber.
+Diseño moderno con tarjetas y panel lateral.
+"""
+
+import datetime
+import threading
+import webbrowser
+import os
+import customtkinter as ctk
+from tkinter import messagebox
+import requests as http_requests
+try:
+    from PIL import Image
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+from providers import PROVIDERS
+from config import (
+    load_config, save_config,
+    get_api_key, set_api_key,
+    is_enabled, set_enabled,
+    get_selected_model, set_selected_model,
+    get_stats, reset_stats, increment_stat,
+)
+from roulette import Roulette
+from server import APIServer
+
+# ── Paleta de colores ─────────────────────────────────────────
+C = {
+    "bg":           "#0f1118",
+    "surface":      "#181b25",
+    "card":         "#1e2233",
+    "card_hover":   "#252a3a",
+    "accent":       "#6c63ff",
+    "accent_hover": "#7f78ff",
+    "green":        "#22c55e",
+    "green_hover":  "#16a34a",
+    "red":          "#ef4444",
+    "red_hover":    "#dc2626",
+    "yellow":       "#eab308",
+    "text":         "#e2e8f0",
+    "text_dim":     "#8892a8",
+    "text_muted":   "#4a5568",
+    "border":       "#2d3348",
+    "input_bg":     "#141720",
+    "tag_free":     "#064e3b",
+    "tag_trial":    "#78350f",
+}
+
+
+class ChamberApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+
+        self.title("Chamber")
+        self.geometry("1200x780")
+        self.minsize(1000, 650)
+        self.configure(fg_color=C["bg"])
+
+        ctk.set_appearance_mode("dark")
+
+        # Load logo
+        self._logo_image = None
+        self._logo_icon = None
+        self._load_logo()
+
+        self.config_data = load_config()
+        self.roulette = None
+        self.api_server = None
+        self.log_lines = []
+        self.gadget_window = None
+
+        self._build_ui()
+        self._populate_providers()
+        self._update_status_loop()
+
+    def _load_logo(self):
+        """Load logo.png from project directory if available."""
+        if not HAS_PIL:
+            return
+        base = os.path.dirname(os.path.abspath(__file__))
+        logo_path = os.path.join(base, "logo.png")
+        ico_path = os.path.join(base, "logo.ico")
+        if os.path.exists(logo_path):
+            try:
+                pil_img = Image.open(logo_path)
+                self._logo_image = ctk.CTkImage(pil_img, size=(48, 48))
+                self._logo_icon = ctk.CTkImage(pil_img, size=(28, 28))
+            except Exception:
+                pass
+        # Set window icon (.ico for Windows)
+        if os.path.exists(ico_path):
+            try:
+                self.iconbitmap(ico_path)
+            except Exception:
+                pass
+
+    # ══════════════════════════════════════════════════════════
+    #  LAYOUT
+    # ══════════════════════════════════════════════════════════
+
+    def _build_ui(self):
+        # ── Sidebar ───────────────────────────────────────────
+        self.sidebar = ctk.CTkFrame(self, width=260, fg_color=C["surface"], corner_radius=0)
+        self.sidebar.pack(side="left", fill="y")
+        self.sidebar.pack_propagate(False)
+
+        self._build_sidebar()
+
+        # ── Main area ─────────────────────────────────────────
+        self.main = ctk.CTkFrame(self, fg_color=C["bg"], corner_radius=0)
+        self.main.pack(side="left", fill="both", expand=True)
+
+        self._build_main_header()
+        self._build_main_content()
+
+    # ── SIDEBAR ───────────────────────────────────────────────
+
+    def _build_sidebar(self):
+        sb = self.sidebar
+
+        # Logo area
+        logo_frame = ctk.CTkFrame(sb, fg_color="transparent", height=80)
+        logo_frame.pack(fill="x", padx=20, pady=(24, 8))
+        logo_frame.pack_propagate(False)
+
+        logo_row = ctk.CTkFrame(logo_frame, fg_color="transparent")
+        logo_row.pack(anchor="w")
+
+        if self._logo_image:
+            ctk.CTkLabel(logo_row, image=self._logo_image, text="").pack(side="left", padx=(0, 10))
+
+        title_col = ctk.CTkFrame(logo_row, fg_color="transparent")
+        title_col.pack(side="left")
+
+        ctk.CTkLabel(
+            title_col, text="Chamber",
+            font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold"),
+            text_color=C["text"]
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            title_col, text="Maximiza tus tokens gratuitos",
+            font=ctk.CTkFont(size=11),
+            text_color=C["text_dim"]
+        ).pack(anchor="w", pady=(2, 0))
+
+        # Divider
+        ctk.CTkFrame(sb, height=1, fg_color=C["border"]).pack(fill="x", padx=16, pady=8)
+
+        # Status card
+        self.status_card = ctk.CTkFrame(sb, fg_color=C["card"], corner_radius=12, height=100)
+        self.status_card.pack(fill="x", padx=16, pady=8)
+        self.status_card.pack_propagate(False)
+
+        self.status_dot = ctk.CTkLabel(
+            self.status_card, text="●",
+            font=ctk.CTkFont(size=14), text_color=C["red"]
+        )
+        self.status_dot.pack(anchor="w", padx=16, pady=(12, 0))
+
+        self.status_label = ctk.CTkLabel(
+            self.status_card, text="Servidor detenido",
+            font=ctk.CTkFont(size=13, weight="bold"), text_color=C["text"],
+            anchor="w"
+        )
+        self.status_label.pack(anchor="w", padx=16)
+
+        self.status_detail = ctk.CTkLabel(
+            self.status_card, text="Sin conexión",
+            font=ctk.CTkFont(size=11), text_color=C["text_dim"],
+            anchor="w"
+        )
+        self.status_detail.pack(anchor="w", padx=16, pady=(0, 10))
+
+        # Current provider card
+        self.current_card = ctk.CTkFrame(sb, fg_color=C["card"], corner_radius=12, height=65)
+        self.current_card.pack(fill="x", padx=16, pady=4)
+        self.current_card.pack_propagate(False)
+
+        ctk.CTkLabel(
+            self.current_card, text="PROVEEDOR ACTUAL",
+            font=ctk.CTkFont(size=9), text_color=C["text_muted"], anchor="w"
+        ).pack(anchor="w", padx=16, pady=(10, 0))
+
+        self.current_provider_label = ctk.CTkLabel(
+            self.current_card, text="—",
+            font=ctk.CTkFont(size=14, weight="bold"), text_color=C["accent"],
+            anchor="w"
+        )
+        self.current_provider_label.pack(anchor="w", padx=16, pady=(0, 10))
+
+        # Divider
+        ctk.CTkFrame(sb, height=1, fg_color=C["border"]).pack(fill="x", padx=16, pady=8)
+
+        # Port config
+        port_frame = ctk.CTkFrame(sb, fg_color="transparent")
+        port_frame.pack(fill="x", padx=16, pady=4)
+        ctk.CTkLabel(
+            port_frame, text="PUERTO LOCAL",
+            font=ctk.CTkFont(size=9), text_color=C["text_muted"], anchor="w"
+        ).pack(anchor="w")
+        self.port_entry = ctk.CTkEntry(
+            port_frame, height=34, font=ctk.CTkFont(size=13),
+            fg_color=C["input_bg"], border_color=C["border"],
+            text_color=C["text"], corner_radius=8
+        )
+        self.port_entry.insert(0, str(self.config_data.get("server_port", 11411)))
+        self.port_entry.pack(fill="x", pady=(4, 0))
+
+        # Spacer
+        ctk.CTkFrame(sb, fg_color="transparent", height=8).pack(fill="x")
+
+        # Action buttons
+        self.start_btn = ctk.CTkButton(
+            sb, text="▶  Iniciar Servidor", height=42,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=C["green"], hover_color=C["green_hover"],
+            text_color="#fff", corner_radius=10,
+            command=self._start_server
+        )
+        self.start_btn.pack(fill="x", padx=16, pady=4)
+
+        self.stop_btn = ctk.CTkButton(
+            sb, text="■  Detener Servidor", height=42,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=C["red"], hover_color=C["red_hover"],
+            text_color="#fff", corner_radius=10,
+            state="disabled", command=self._stop_server
+        )
+        self.stop_btn.pack(fill="x", padx=16, pady=4)
+
+        # Divider
+        ctk.CTkFrame(sb, height=1, fg_color=C["border"]).pack(fill="x", padx=16, pady=8)
+
+        # Utility buttons
+        for text, cmd in [
+            ("Modo Gadget", self._toggle_gadget),
+            ("Resetear agotados", self._reset_exhausted),
+            ("Resetear estadísticas", self._reset_all_stats),
+        ]:
+            ctk.CTkButton(
+                sb, text=text, height=32,
+                font=ctk.CTkFont(size=11),
+                fg_color="transparent", hover_color=C["card"],
+                text_color=C["text_dim"], anchor="w",
+                corner_radius=8, command=cmd
+            ).pack(fill="x", padx=16, pady=1)
+
+        # Bottom save button
+        ctk.CTkFrame(sb, fg_color="transparent").pack(fill="both", expand=True)
+        self.save_btn = ctk.CTkButton(
+            sb, text="Guardar configuración", height=38,
+            font=ctk.CTkFont(size=12),
+            fg_color=C["accent"], hover_color=C["accent_hover"],
+            text_color="#fff", corner_radius=10,
+            command=self._save_all
+        )
+        self.save_btn.pack(fill="x", padx=16, pady=(4, 20))
+
+    # ── MAIN HEADER (tab navigation) ─────────────────────────
+
+    def _build_main_header(self):
+        header = ctk.CTkFrame(self.main, fg_color="transparent", height=50)
+        header.pack(fill="x", padx=24, pady=(18, 4))
+        header.pack_propagate(False)
+
+        self.nav_buttons = {}
+        self.current_tab = "chat"
+        tabs = [
+            ("chat", "Chat"),
+            ("providers", "Proveedores"),
+            ("stats", "Consumo"),
+            ("log", "Registro"),
+            ("info", "Cómo usar"),
+        ]
+        nav_frame = ctk.CTkFrame(header, fg_color="transparent")
+        nav_frame.pack(side="left")
+
+        for tab_id, label in tabs:
+            btn = ctk.CTkButton(
+                nav_frame, text=label, height=36, width=120,
+                font=ctk.CTkFont(size=13),
+                fg_color=C["accent"] if tab_id == "chat" else "transparent",
+                hover_color=C["card_hover"],
+                text_color=C["text"],
+                corner_radius=10,
+                command=lambda t=tab_id: self._switch_tab(t)
+            )
+            btn.pack(side="left", padx=3)
+            self.nav_buttons[tab_id] = btn
+
+    def _switch_tab(self, tab_id):
+        self.current_tab = tab_id
+        for tid, btn in self.nav_buttons.items():
+            btn.configure(fg_color=C["accent"] if tid == tab_id else "transparent")
+
+        for fid, frame in self.tab_frames.items():
+            if fid == tab_id:
+                frame.pack(fill="both", expand=True, padx=24, pady=(8, 16))
+            else:
+                frame.pack_forget()
+
+    # ── MAIN CONTENT ──────────────────────────────────────────
+
+    def _build_main_content(self):
+        self.tab_frames = {}
+
+        self.tab_frames["chat"] = ctk.CTkFrame(self.main, fg_color="transparent")
+        self._build_chat_tab(self.tab_frames["chat"])
+
+        self.tab_frames["providers"] = ctk.CTkFrame(self.main, fg_color="transparent")
+        self._build_providers_tab(self.tab_frames["providers"])
+
+        self.tab_frames["stats"] = ctk.CTkFrame(self.main, fg_color="transparent")
+        self._build_stats_tab(self.tab_frames["stats"])
+
+        self.tab_frames["log"] = ctk.CTkFrame(self.main, fg_color="transparent")
+        self._build_log_tab(self.tab_frames["log"])
+
+        self.tab_frames["info"] = ctk.CTkFrame(self.main, fg_color="transparent")
+        self._build_info_tab(self.tab_frames["info"])
+
+        # Show initial tab
+        self.tab_frames["chat"].pack(fill="both", expand=True, padx=24, pady=(8, 16))
+
+    # ── CHAT TAB ──────────────────────────────────────────────
+
+    def _build_chat_tab(self, parent):
+        self.chat_messages = []  # [{"role": ..., "content": ...}]
+
+        # Messages area
+        self.chat_display = ctk.CTkTextbox(
+            parent,
+            font=ctk.CTkFont(family="Segoe UI", size=13),
+            fg_color=C["surface"], text_color=C["text"],
+            corner_radius=12, border_width=1, border_color=C["border"],
+            state="disabled", wrap="word"
+        )
+        self.chat_display.pack(fill="both", expand=True, pady=(0, 8))
+
+        # Configure text tags for styling
+        self.chat_display._textbox.tag_configure(
+            "user_name", foreground=C["accent"],
+            font=("Segoe UI", 11, "bold")
+        )
+        self.chat_display._textbox.tag_configure(
+            "assistant_name", foreground=C["green"],
+            font=("Segoe UI", 11, "bold")
+        )
+        self.chat_display._textbox.tag_configure(
+            "system_msg", foreground=C["text_muted"],
+            font=("Segoe UI", 11, "italic")
+        )
+        self.chat_display._textbox.tag_configure(
+            "provider_tag", foreground=C["yellow"],
+            font=("Segoe UI", 9)
+        )
+
+        # Bottom input area
+        input_frame = ctk.CTkFrame(parent, fg_color=C["card"], corner_radius=12, height=56)
+        input_frame.pack(fill="x")
+        input_frame.pack_propagate(False)
+
+        # System prompt toggle
+        self.system_visible = False
+        self.sys_btn = ctk.CTkButton(
+            input_frame, text="Sys", width=36, height=36,
+            font=ctk.CTkFont(size=11),
+            fg_color="transparent", hover_color=C["card_hover"],
+            text_color=C["text_muted"], corner_radius=8,
+            command=self._toggle_system_prompt
+        )
+        self.sys_btn.pack(side="left", padx=(10, 4), pady=10)
+
+        # System prompt frame (created now, shown/hidden on toggle)
+        self.system_frame = ctk.CTkFrame(parent, fg_color=C["card"], corner_radius=10)
+        self.system_entry = ctk.CTkEntry(
+            self.system_frame, height=34,
+            placeholder_text="System prompt (opcional)...",
+            font=ctk.CTkFont(size=12),
+            fg_color=C["input_bg"], border_color=C["border"],
+            text_color=C["text"], corner_radius=8
+        )
+        self.system_entry.pack(fill="x", padx=10, pady=8)
+
+        self.chat_input = ctk.CTkEntry(
+            input_frame, height=36,
+            placeholder_text="Escribe un mensaje...",
+            font=ctk.CTkFont(size=13),
+            fg_color=C["input_bg"], border_color=C["border"],
+            text_color=C["text"], corner_radius=8
+        )
+        self.chat_input.pack(side="left", fill="x", expand=True, padx=4, pady=10)
+        self.chat_input.bind("<Return>", lambda e: self._send_message())
+
+        self.send_btn = ctk.CTkButton(
+            input_frame, text="Enviar", width=80, height=36,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=C["accent"], hover_color=C["accent_hover"],
+            text_color="#fff", corner_radius=8,
+            command=self._send_message
+        )
+        self.send_btn.pack(side="right", padx=(4, 10), pady=10)
+
+        self.clear_chat_btn = ctk.CTkButton(
+            input_frame, text="Limpiar", width=64, height=36,
+            font=ctk.CTkFont(size=11),
+            fg_color="transparent", hover_color=C["card_hover"],
+            text_color=C["text_muted"], corner_radius=8,
+            command=self._clear_chat
+        )
+        self.clear_chat_btn.pack(side="right", padx=2, pady=10)
+
+    def _toggle_system_prompt(self):
+        if self.system_visible:
+            self.system_frame.pack_forget()
+            self.sys_btn.configure(text_color=C["text_muted"])
+        else:
+            # Pack between chat display and input
+            self.system_frame.pack(fill="x", pady=(4, 0), after=self.chat_display)
+            self.sys_btn.configure(text_color=C["accent"])
+        self.system_visible = not self.system_visible
+
+    def _send_message(self):
+        text = self.chat_input.get().strip()
+        if not text:
+            return
+        if not self.roulette:
+            self._chat_append_system("Inicia el servidor primero (▶ Iniciar Servidor)")
+            return
+
+        self.chat_input.delete(0, "end")
+        self.send_btn.configure(state="disabled", text="...")
+
+        # Append user message
+        self.chat_messages.append({"role": "user", "content": text})
+        self._chat_append_user(text)
+
+        # Build messages for API
+        api_messages = []
+        sys_text = ""
+        if hasattr(self, "system_entry"):
+            sys_text = self.system_entry.get().strip()
+        if sys_text:
+            api_messages.append({"role": "system", "content": sys_text})
+        api_messages.extend(self.chat_messages)
+
+        # Send in background thread
+        def do_request():
+            try:
+                result = self.roulette.chat_completion(api_messages)
+                if "error" in result and "choices" not in result:
+                    err = result["error"].get("message", "Error desconocido")
+                    self.after(0, lambda: self._chat_append_system(f"Error: {err}"))
+                else:
+                    content = result["choices"][0]["message"]["content"]
+                    model = result.get("model", "")
+                    provider = self.roulette.get_current_provider_id()
+                    prov_name = PROVIDERS.get(provider, {}).get("name", provider)
+                    tag = f"{prov_name}" + (f" · {model}" if model else "")
+                    self.chat_messages.append({"role": "assistant", "content": content})
+                    self.after(0, lambda c=content, t=tag: self._chat_append_assistant(c, t))
+            except Exception as e:
+                self.after(0, lambda: self._chat_append_system(f"Error: {e}"))
+            finally:
+                self.after(0, lambda: self.send_btn.configure(state="normal", text="Enviar"))
+
+        threading.Thread(target=do_request, daemon=True).start()
+
+    def _chat_append_user(self, text):
+        self.chat_display.configure(state="normal")
+        self.chat_display._textbox.insert("end", "Tú\n", "user_name")
+        self.chat_display.insert("end", f"{text}\n\n")
+        self.chat_display.see("end")
+        self.chat_display.configure(state="disabled")
+
+    def _chat_append_assistant(self, text, provider_tag=""):
+        self.chat_display.configure(state="normal")
+        self.chat_display._textbox.insert("end", "AI", "assistant_name")
+        if provider_tag:
+            self.chat_display._textbox.insert("end", f"  [{provider_tag}]", "provider_tag")
+        self.chat_display._textbox.insert("end", "\n")
+        self.chat_display.insert("end", f"{text}\n\n")
+        self.chat_display.see("end")
+        self.chat_display.configure(state="disabled")
+
+    def _chat_append_system(self, text):
+        self.chat_display.configure(state="normal")
+        self.chat_display._textbox.insert("end", f"{text}\n\n", "system_msg")
+        self.chat_display.see("end")
+        self.chat_display.configure(state="disabled")
+
+    def _clear_chat(self):
+        self.chat_messages.clear()
+        self.chat_display.configure(state="normal")
+        self.chat_display.delete("1.0", "end")
+        self.chat_display.configure(state="disabled")
+
+    # ── PROVIDERS TAB ─────────────────────────────────────────
+
+    def _build_providers_tab(self, parent):
+        self.provider_scroll = ctk.CTkScrollableFrame(
+            parent, fg_color="transparent",
+            scrollbar_button_color=C["border"],
+            scrollbar_button_hover_color=C["text_muted"]
+        )
+        self.provider_scroll.pack(fill="both", expand=True)
+        self.provider_widgets = {}
+
+    def _populate_providers(self):
+        free_ids = [
+            "openrouter", "groq", "cerebras", "cohere",
+            "github_models", "mistral", "google_ai", "nvidia_nim"
+        ]
+        trial_ids = [
+            "sambanova", "hyperbolic", "fireworks", "nebius"
+        ]
+
+        self._add_section_header(self.provider_scroll, "GRATUITOS PERMANENTES", len(free_ids))
+        for pid in free_ids:
+            if pid in PROVIDERS:
+                self._add_provider_card(pid, PROVIDERS[pid], is_trial=False)
+
+        ctk.CTkFrame(self.provider_scroll, height=12, fg_color="transparent").pack(fill="x")
+        self._add_section_header(self.provider_scroll, "CON CRÉDITOS DE PRUEBA", len(trial_ids))
+        for pid in trial_ids:
+            if pid in PROVIDERS:
+                self._add_provider_card(pid, PROVIDERS[pid], is_trial=True)
+
+    def _add_section_header(self, parent, title, count):
+        frame = ctk.CTkFrame(parent, fg_color="transparent", height=32)
+        frame.pack(fill="x", pady=(8, 4))
+        frame.pack_propagate(False)
+        ctk.CTkLabel(
+            frame, text=f"{title}  ({count})",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=C["text_muted"]
+        ).pack(side="left")
+
+    def _add_provider_card(self, pid, prov, is_trial=False):
+        card = ctk.CTkFrame(
+            self.provider_scroll,
+            fg_color=C["card"], corner_radius=12,
+            border_width=1, border_color=C["border"]
+        )
+        card.pack(fill="x", pady=4, ipady=4)
+
+        widgets = {}
+
+        # ── Row 1: header (switch + name + tags + stats) ──
+        row1 = ctk.CTkFrame(card, fg_color="transparent")
+        row1.pack(fill="x", padx=16, pady=(12, 4))
+
+        left = ctk.CTkFrame(row1, fg_color="transparent")
+        left.pack(side="left")
+
+        enabled_var = ctk.BooleanVar(value=is_enabled(self.config_data, pid))
+        switch = ctk.CTkSwitch(
+            left, text="", variable=enabled_var,
+            width=42, height=22,
+            progress_color=C["green"],
+            button_color="#fff",
+            fg_color=C["text_muted"]
+        )
+        switch.pack(side="left", padx=(0, 10))
+        widgets["enabled_var"] = enabled_var
+
+        name_btn = ctk.CTkButton(
+            left, text=prov["name"],
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color="transparent", hover_color=C["card_hover"],
+            text_color=C["text"], anchor="w",
+            cursor="hand2", height=28,
+            command=lambda u=prov["signup_url"]: webbrowser.open(u)
+        )
+        name_btn.pack(side="left")
+
+        ctk.CTkButton(
+            left, text="↗", width=24, height=24,
+            font=ctk.CTkFont(size=13),
+            fg_color="transparent", hover_color=C["card_hover"],
+            text_color=C["text_dim"], cursor="hand2",
+            command=lambda u=prov["signup_url"]: webbrowser.open(u)
+        ).pack(side="left", padx=(2, 0))
+
+        right = ctk.CTkFrame(row1, fg_color="transparent")
+        right.pack(side="right")
+
+        tag_color = C["tag_trial"] if is_trial else C["tag_free"]
+        tag_text = "TRIAL" if is_trial else "FREE"
+        ctk.CTkLabel(
+            right, text=f" {tag_text} ",
+            font=ctk.CTkFont(size=9, weight="bold"),
+            fg_color=tag_color, corner_radius=4,
+            text_color=C["text"], height=20
+        ).pack(side="left", padx=(0, 8))
+
+        stats = get_stats(self.config_data, pid)
+        stats_label = ctk.CTkLabel(
+            right,
+            text=f"✓ {stats['requests']}   ✗ {stats['errors']}",
+            font=ctk.CTkFont(size=11),
+            text_color=C["text_dim"]
+        )
+        stats_label.pack(side="left")
+        widgets["stats_label"] = stats_label
+
+        # ── Row 2: limits + notes ──
+        ctk.CTkLabel(
+            card, text=prov["limits"] + "  ·  " + prov["notes"],
+            font=ctk.CTkFont(size=11),
+            text_color=C["text_muted"], anchor="w"
+        ).pack(fill="x", padx=16, pady=(0, 6))
+
+        # ── Row 3: API key + model selector ──
+        row3 = ctk.CTkFrame(card, fg_color="transparent")
+        row3.pack(fill="x", padx=16, pady=(0, 12))
+
+        # API Key
+        key_frame = ctk.CTkFrame(row3, fg_color="transparent")
+        key_frame.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        ctk.CTkLabel(
+            key_frame, text="API KEY",
+            font=ctk.CTkFont(size=9), text_color=C["text_muted"], anchor="w"
+        ).pack(anchor="w")
+
+        key_row = ctk.CTkFrame(key_frame, fg_color="transparent")
+        key_row.pack(fill="x")
+
+        key_entry = ctk.CTkEntry(
+            key_row, height=34, show="•",
+            placeholder_text="Pegar API Key...",
+            font=ctk.CTkFont(size=12),
+            fg_color=C["input_bg"], border_color=C["border"],
+            text_color=C["text"], corner_radius=8
+        )
+        saved_key = get_api_key(self.config_data, pid)
+        if saved_key:
+            key_entry.insert(0, saved_key)
+        key_entry.pack(side="left", fill="x", expand=True)
+        widgets["key_entry"] = key_entry
+
+        def make_toggle(entry):
+            showing = [False]
+            def toggle():
+                showing[0] = not showing[0]
+                entry.configure(show="" if showing[0] else "•")
+            return toggle
+
+        ctk.CTkButton(
+            key_row, text="👁", width=34, height=34,
+            font=ctk.CTkFont(size=13),
+            fg_color=C["input_bg"], hover_color=C["card_hover"],
+            border_width=1, border_color=C["border"],
+            text_color=C["text_dim"], corner_radius=8,
+            command=make_toggle(key_entry)
+        ).pack(side="left", padx=(4, 0))
+
+        # Sync models button
+        sync_btn = ctk.CTkButton(
+            key_row, text="⟳", width=34, height=34,
+            font=ctk.CTkFont(size=15),
+            fg_color=C["input_bg"], hover_color=C["card_hover"],
+            border_width=1, border_color=C["border"],
+            text_color=C["accent"], corner_radius=8,
+            command=lambda p=pid: self._sync_models(p)
+        )
+        sync_btn.pack(side="left", padx=(4, 0))
+        widgets["sync_btn"] = sync_btn
+
+        # Model selector
+        model_frame = ctk.CTkFrame(row3, fg_color="transparent", width=260)
+        model_frame.pack(side="right")
+        model_frame.pack_propagate(False)
+
+        ctk.CTkLabel(
+            model_frame, text="MODELO",
+            font=ctk.CTkFont(size=9), text_color=C["text_muted"], anchor="w"
+        ).pack(anchor="w")
+
+        models = prov["models"]
+        selected = get_selected_model(self.config_data, pid)
+        model_var = ctk.StringVar(value=selected)
+        model_menu = ctk.CTkOptionMenu(
+            model_frame, variable=model_var, values=models,
+            height=34, font=ctk.CTkFont(size=11),
+            fg_color=C["input_bg"], button_color=C["border"],
+            button_hover_color=C["text_muted"],
+            dropdown_fg_color=C["surface"],
+            dropdown_hover_color=C["card"],
+            text_color=C["text"],
+            corner_radius=8
+        )
+        model_menu.pack(fill="x")
+        widgets["model_var"] = model_var
+        widgets["model_menu"] = model_menu
+
+        self.provider_widgets[pid] = widgets
+
+    # ── LOG TAB ───────────────────────────────────────────────
+
+    def _build_log_tab(self, parent):
+        top = ctk.CTkFrame(parent, fg_color="transparent", height=36)
+        top.pack(fill="x", pady=(0, 6))
+        top.pack_propagate(False)
+
+        ctk.CTkLabel(
+            top, text="REGISTRO DE ACTIVIDAD",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=C["text_muted"]
+        ).pack(side="left")
+
+        ctk.CTkButton(
+            top, text="Limpiar", width=70, height=28,
+            font=ctk.CTkFont(size=11),
+            fg_color=C["card"], hover_color=C["card_hover"],
+            text_color=C["text_dim"], corner_radius=6,
+            command=self._clear_log
+        ).pack(side="right")
+
+        self.log_text = ctk.CTkTextbox(
+            parent,
+            font=ctk.CTkFont(family="Cascadia Code, Consolas, monospace", size=12),
+            fg_color=C["surface"], text_color=C["text"],
+            corner_radius=12, border_width=1, border_color=C["border"],
+            state="disabled"
+        )
+        self.log_text.pack(fill="both", expand=True)
+
+    # ── INFO TAB ──────────────────────────────────────────────
+
+    def _build_info_tab(self, parent):
+        scroll = ctk.CTkScrollableFrame(
+            parent, fg_color="transparent",
+            scrollbar_button_color=C["border"]
+        )
+        scroll.pack(fill="both", expand=True)
+
+        sections = [
+            ("Configuración rápida", [
+                "1.  Haz clic en el nombre de cada proveedor para registrarte",
+                "2.  Pega tu API Key y activa el switch",
+                "3.  Pulsa  ▶ Iniciar Servidor",
+                "4.  Listo — usa http://localhost:11411/v1 como si fuera OpenAI",
+            ]),
+            ("Endpoint local", [
+                "Base URL:    http://localhost:11411/v1",
+                "API Key:     cualquier valor (no se valida)",
+                "Modelo:      auto  (o  proveedor/modelo)",
+            ]),
+            ("Ejemplo — Python", [
+                "from openai import OpenAI",
+                'client = OpenAI(base_url="http://localhost:11411/v1", api_key="x")',
+                "r = client.chat.completions.create(",
+                '    model="auto",',
+                '    messages=[{"role":"user","content":"Hola!"}]',
+                ")",
+                "print(r.choices[0].message.content)",
+            ]),
+            ("Ejemplo — curl", [
+                "curl http://localhost:11411/v1/chat/completions \\",
+                '  -H "Content-Type: application/json" \\',
+                '  -d \'{"model":"auto","messages":[{"role":"user","content":"Hola!"}]}\'',
+            ]),
+            ("Compatible con", [
+                "·  Continue (VS Code)     ·  Open WebUI",
+                "·  LangChain / LlamaIndex ·  Cualquier cliente OpenAI",
+            ]),
+        ]
+
+        for title, lines in sections:
+            sec = ctk.CTkFrame(scroll, fg_color=C["card"], corner_radius=12)
+            sec.pack(fill="x", pady=6)
+
+            ctk.CTkLabel(
+                sec, text=title,
+                font=ctk.CTkFont(size=14, weight="bold"),
+                text_color=C["text"], anchor="w"
+            ).pack(fill="x", padx=20, pady=(14, 4))
+
+            content = "\n".join(lines)
+            ctk.CTkLabel(
+                sec, text=content,
+                font=ctk.CTkFont(family="Cascadia Code, Consolas, monospace", size=12),
+                text_color=C["text_dim"], anchor="nw", justify="left",
+                wraplength=700
+            ).pack(fill="x", padx=20, pady=(0, 14))
+
+    # ── STATS / CONSUMO TAB ───────────────────────────────────
+
+    def _build_stats_tab(self, parent):
+        # Header with refresh button
+        top = ctk.CTkFrame(parent, fg_color="transparent", height=36)
+        top.pack(fill="x", pady=(0, 6))
+        top.pack_propagate(False)
+
+        ctk.CTkLabel(
+            top, text="CONSUMO POR PROVEEDOR",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=C["text_muted"]
+        ).pack(side="left")
+
+        ctk.CTkButton(
+            top, text="Actualizar", width=80, height=28,
+            font=ctk.CTkFont(size=11),
+            fg_color=C["card"], hover_color=C["card_hover"],
+            text_color=C["text_dim"], corner_radius=6,
+            command=self._refresh_stats_tab
+        ).pack(side="right")
+
+        # Scrollable area for provider stats cards
+        self.stats_scroll = ctk.CTkScrollableFrame(
+            parent, fg_color="transparent",
+            scrollbar_button_color=C["border"],
+            scrollbar_button_hover_color=C["text_muted"]
+        )
+        self.stats_scroll.pack(fill="both", expand=True)
+
+        # Summary card at top
+        self.stats_summary_frame = ctk.CTkFrame(
+            self.stats_scroll, fg_color=C["card"], corner_radius=12,
+            border_width=1, border_color=C["accent"]
+        )
+        self.stats_summary_frame.pack(fill="x", pady=(0, 12))
+
+        self.stats_summary_labels = {}
+        row = ctk.CTkFrame(self.stats_summary_frame, fg_color="transparent")
+        row.pack(fill="x", padx=20, pady=16)
+
+        for i, (key, icon, label) in enumerate([
+            ("total_req", "✓", "Peticiones"),
+            ("total_err", "✗", "Errores"),
+            ("total_tokens", "◈", "Tokens totales"),
+            ("prompt_tokens", "→", "Prompt tokens"),
+            ("compl_tokens", "←", "Completion tokens"),
+        ]):
+            col = ctk.CTkFrame(row, fg_color="transparent")
+            col.pack(side="left", expand=True)
+            val_label = ctk.CTkLabel(
+                col, text=f"{icon} 0",
+                font=ctk.CTkFont(size=20, weight="bold"),
+                text_color=C["green"] if "req" in key else (C["red"] if "err" in key else C["accent"])
+            )
+            val_label.pack()
+            ctk.CTkLabel(
+                col, text=label,
+                font=ctk.CTkFont(size=10), text_color=C["text_muted"]
+            ).pack()
+            self.stats_summary_labels[key] = val_label
+
+        # Per-provider cards container
+        self.stats_cards_frame = ctk.CTkFrame(self.stats_scroll, fg_color="transparent")
+        self.stats_cards_frame.pack(fill="x")
+
+        self.stats_provider_widgets = {}
+        self._build_stats_provider_cards()
+
+    def _build_stats_provider_cards(self):
+        """Build one card per provider with bar chart of usage."""
+        for widget in self.stats_cards_frame.winfo_children():
+            widget.destroy()
+        self.stats_provider_widgets.clear()
+
+        all_stats = {pid: get_stats(self.config_data, pid) for pid in PROVIDERS}
+        max_tok = max((s.get("total_tokens", 0) for s in all_stats.values()), default=1) or 1
+
+        for pid, prov in PROVIDERS.items():
+            stats = all_stats[pid]
+            if stats["requests"] == 0 and stats["errors"] == 0:
+                continue  # Skip providers with no usage
+
+            card = ctk.CTkFrame(
+                self.stats_cards_frame, fg_color=C["card"],
+                corner_radius=10, border_width=1, border_color=C["border"]
+            )
+            card.pack(fill="x", pady=3)
+
+            # Row: name + numbers
+            row = ctk.CTkFrame(card, fg_color="transparent")
+            row.pack(fill="x", padx=16, pady=(10, 2))
+
+            ctk.CTkLabel(
+                row, text=prov["name"],
+                font=ctk.CTkFont(size=13, weight="bold"),
+                text_color=C["text"]
+            ).pack(side="left")
+
+            nums = ctk.CTkFrame(row, fg_color="transparent")
+            nums.pack(side="right")
+
+            ctk.CTkLabel(
+                nums, text=f"✓ {stats['requests']}",
+                font=ctk.CTkFont(size=12), text_color=C["green"]
+            ).pack(side="left", padx=(0, 12))
+            ctk.CTkLabel(
+                nums, text=f"✗ {stats['errors']}",
+                font=ctk.CTkFont(size=12), text_color=C["red"]
+            ).pack(side="left", padx=(0, 12))
+
+            tok = stats.get("total_tokens", 0)
+            ctk.CTkLabel(
+                nums, text=f"◈ {self._fmt_tokens(tok)} tokens",
+                font=ctk.CTkFont(size=12), text_color=C["accent"]
+            ).pack(side="left")
+
+            # Token detail row
+            pt = stats.get("prompt_tokens", 0)
+            ct = stats.get("completion_tokens", 0)
+            if pt or ct:
+                tok_row = ctk.CTkFrame(card, fg_color="transparent")
+                tok_row.pack(fill="x", padx=16, pady=(0, 2))
+                ctk.CTkLabel(
+                    tok_row,
+                    text=f"→ {self._fmt_tokens(pt)} prompt   ← {self._fmt_tokens(ct)} completion",
+                    font=ctk.CTkFont(size=10), text_color=C["text_muted"]
+                ).pack(side="left")
+
+            # Usage bar
+            bar_bg = ctk.CTkFrame(card, fg_color=C["input_bg"], corner_radius=4, height=8)
+            bar_bg.pack(fill="x", padx=16, pady=(2, 4))
+            bar_bg.pack_propagate(False)
+
+            ratio = stats.get("total_tokens", 0) / max_tok
+            bar_fill = ctk.CTkFrame(
+                bar_bg, fg_color=C["accent"], corner_radius=4,
+                width=max(int(ratio * 600), 4), height=8
+            )
+            bar_fill.pack(side="left", fill="y")
+
+            # Last error if any
+            last_err = stats.get("last_error", "")
+            if last_err:
+                ctk.CTkLabel(
+                    card, text=f"Último error: {last_err[:80]}",
+                    font=ctk.CTkFont(size=10), text_color=C["red"],
+                    anchor="w"
+                ).pack(fill="x", padx=16, pady=(0, 8))
+            else:
+                ctk.CTkFrame(card, fg_color="transparent", height=4).pack()
+
+            self.stats_provider_widgets[pid] = card
+
+    def _refresh_stats_tab(self):
+        """Refresh all stats displays."""
+        all_stats = {pid: get_stats(self.config_data, pid) for pid in PROVIDERS}
+        total_req = sum(s["requests"] for s in all_stats.values())
+        total_err = sum(s["errors"] for s in all_stats.values())
+        total_tok = sum(s.get("total_tokens", 0) for s in all_stats.values())
+        prompt_tok = sum(s.get("prompt_tokens", 0) for s in all_stats.values())
+        compl_tok = sum(s.get("completion_tokens", 0) for s in all_stats.values())
+
+        self.stats_summary_labels["total_req"].configure(text=f"✓ {total_req}")
+        self.stats_summary_labels["total_err"].configure(text=f"✗ {total_err}")
+        self.stats_summary_labels["total_tokens"].configure(text=f"◈ {self._fmt_tokens(total_tok)}")
+        self.stats_summary_labels["prompt_tokens"].configure(text=f"→ {self._fmt_tokens(prompt_tok)}")
+        self.stats_summary_labels["compl_tokens"].configure(text=f"← {self._fmt_tokens(compl_tok)}")
+
+        self._build_stats_provider_cards()
+
+    @staticmethod
+    def _fmt_tokens(n):
+        """Format token count for display."""
+        if n >= 1_000_000:
+            return f"{n / 1_000_000:.1f}M"
+        if n >= 1_000:
+            return f"{n / 1_000:.1f}K"
+        return str(n)
+
+        self._build_stats_provider_cards()
+
+    # ── GADGET MODE ───────────────────────────────────────────
+
+    def _toggle_gadget(self):
+        """Toggle the floating mini-widget."""
+        if self.gadget_window and self.gadget_window.winfo_exists():
+            self.gadget_window.destroy()
+            self.gadget_window = None
+            return
+
+        gw = ctk.CTkToplevel(self)
+        gw.title("Chamber")
+        gw.geometry("280x180")
+        gw.resizable(False, False)
+        gw.attributes("-topmost", True)
+        gw.configure(fg_color=C["bg"])
+        gw.overrideredirect(True)  # Borderless
+
+        # Make draggable
+        gw._drag_x = 0
+        gw._drag_y = 0
+
+        def start_drag(e):
+            gw._drag_x = e.x
+            gw._drag_y = e.y
+
+        def do_drag(e):
+            x = gw.winfo_x() + e.x - gw._drag_x
+            y = gw.winfo_y() + e.y - gw._drag_y
+            gw.geometry(f"+{x}+{y}")
+
+        gw.bind("<Button-1>", start_drag)
+        gw.bind("<B1-Motion>", do_drag)
+
+        # Main container with rounded border
+        container = ctk.CTkFrame(gw, fg_color=C["surface"], corner_radius=16,
+                                 border_width=1, border_color=C["border"])
+        container.pack(fill="both", expand=True, padx=2, pady=2)
+
+        # Header row: logo + title + close
+        header = ctk.CTkFrame(container, fg_color="transparent")
+        header.pack(fill="x", padx=12, pady=(10, 4))
+
+        if self._logo_icon:
+            ctk.CTkLabel(header, image=self._logo_icon, text="").pack(side="left", padx=(0, 6))
+
+        ctk.CTkLabel(
+            header, text="Chamber",
+            font=ctk.CTkFont(size=14, weight="bold"), text_color=C["text"]
+        ).pack(side="left")
+
+        ctk.CTkButton(
+            header, text="✕", width=24, height=24,
+            font=ctk.CTkFont(size=12),
+            fg_color="transparent", hover_color=C["card_hover"],
+            text_color=C["text_dim"], corner_radius=6,
+            command=lambda: (gw.destroy(), setattr(self, 'gadget_window', None))
+        ).pack(side="right")
+
+        ctk.CTkButton(
+            header, text="□", width=24, height=24,
+            font=ctk.CTkFont(size=12),
+            fg_color="transparent", hover_color=C["card_hover"],
+            text_color=C["text_dim"], corner_radius=6,
+            command=lambda: (self.deiconify(), self.lift())
+        ).pack(side="right", padx=2)
+
+        # Status row
+        status_row = ctk.CTkFrame(container, fg_color="transparent")
+        status_row.pack(fill="x", padx=12, pady=2)
+
+        self._gadget_dot = ctk.CTkLabel(
+            status_row, text="●", font=ctk.CTkFont(size=12), text_color=C["red"]
+        )
+        self._gadget_dot.pack(side="left")
+        self._gadget_status = ctk.CTkLabel(
+            status_row, text="Detenido",
+            font=ctk.CTkFont(size=12), text_color=C["text_dim"]
+        )
+        self._gadget_status.pack(side="left", padx=(6, 0))
+
+        # Provider row
+        prov_row = ctk.CTkFrame(container, fg_color="transparent")
+        prov_row.pack(fill="x", padx=12, pady=2)
+
+        ctk.CTkLabel(
+            prov_row, text="Proveedor:",
+            font=ctk.CTkFont(size=11), text_color=C["text_muted"]
+        ).pack(side="left")
+        self._gadget_provider = ctk.CTkLabel(
+            prov_row, text="—",
+            font=ctk.CTkFont(size=11, weight="bold"), text_color=C["accent"]
+        )
+        self._gadget_provider.pack(side="left", padx=(6, 0))
+
+        # Stats row
+        stats_row = ctk.CTkFrame(container, fg_color="transparent")
+        stats_row.pack(fill="x", padx=12, pady=(2, 4))
+
+        all_stats = {pid: get_stats(self.config_data, pid) for pid in PROVIDERS}
+        total_req = sum(s["requests"] for s in all_stats.values())
+        total_err = sum(s["errors"] for s in all_stats.values())
+
+        self._gadget_reqs = ctk.CTkLabel(
+            stats_row, text=f"✓ {total_req}",
+            font=ctk.CTkFont(size=12), text_color=C["green"]
+        )
+        self._gadget_reqs.pack(side="left")
+        self._gadget_errs = ctk.CTkLabel(
+            stats_row, text=f"✗ {total_err}",
+            font=ctk.CTkFont(size=12), text_color=C["red"]
+        )
+        self._gadget_errs.pack(side="left", padx=(16, 0))
+
+        # Bottom bar with quick actions
+        bottom = ctk.CTkFrame(container, fg_color="transparent")
+        bottom.pack(fill="x", padx=12, pady=(0, 8))
+
+        ctk.CTkButton(
+            bottom, text="▶", width=36, height=28,
+            font=ctk.CTkFont(size=13),
+            fg_color=C["green"], hover_color=C["green_hover"],
+            text_color="#fff", corner_radius=6,
+            command=self._start_server
+        ).pack(side="left", padx=(0, 4))
+        ctk.CTkButton(
+            bottom, text="■", width=36, height=28,
+            font=ctk.CTkFont(size=13),
+            fg_color=C["red"], hover_color=C["red_hover"],
+            text_color="#fff", corner_radius=6,
+            command=self._stop_server
+        ).pack(side="left")
+
+        self.gadget_window = gw
+        self._update_gadget()
+
+    def _update_gadget(self):
+        """Update gadget widget with current status."""
+        if not self.gadget_window or not self.gadget_window.winfo_exists():
+            return
+
+        running = self.roulette and self.api_server and self.api_server.running
+        if running:
+            port = self.config_data.get("server_port", 11411)
+            self._gadget_dot.configure(text_color=C["green"])
+            self._gadget_status.configure(text=f"Activo :{port}", text_color=C["text"])
+            current = self.roulette.get_current_provider_id()
+            if current:
+                self._gadget_provider.configure(text=PROVIDERS.get(current, {}).get("name", current))
+            else:
+                self._gadget_provider.configure(text="—")
+        else:
+            self._gadget_dot.configure(text_color=C["red"])
+            self._gadget_status.configure(text="Detenido", text_color=C["text_dim"])
+            self._gadget_provider.configure(text="—")
+
+        all_stats = {pid: get_stats(self.config_data, pid) for pid in PROVIDERS}
+        total_req = sum(s["requests"] for s in all_stats.values())
+        total_err = sum(s["errors"] for s in all_stats.values())
+        self._gadget_reqs.configure(text=f"✓ {total_req}")
+        self._gadget_errs.configure(text=f"✗ {total_err}")
+
+        self.gadget_window.after(2000, self._update_gadget)
+
+    # ══════════════════════════════════════════════════════════
+    #  SERVER CONTROL
+    # ══════════════════════════════════════════════════════════
+
+    def _start_server(self):
+        self._save_all(quiet=True)
+
+        any_active = any(
+            is_enabled(self.config_data, pid) and get_api_key(self.config_data, pid).strip()
+            for pid in PROVIDERS
+        )
+        if not any_active:
+            messagebox.showwarning(
+                "Sin proveedores",
+                "Activa al menos un proveedor con su API Key antes de iniciar."
+            )
+            return
+
+        port = int(self.port_entry.get() or 11411)
+        self.config_data["server_port"] = port
+
+        self.roulette = Roulette(
+            self.config_data,
+            on_switch=self._on_provider_switch,
+            on_log=self._append_log
+        )
+        self.api_server = APIServer(
+            self.roulette, port=port, on_log=self._append_log
+        )
+        self.api_server.start()
+
+        self._append_log(f"Servidor iniciado — http://localhost:{port}/v1")
+        self._append_log(f"Proveedores activos: {self.roulette.get_active_count()}")
+        current = self.roulette.get_current_provider_id()
+        if current:
+            self._append_log(f"Proveedor actual: {PROVIDERS[current]['name']}")
+
+        self.start_btn.configure(state="disabled")
+        self.stop_btn.configure(state="normal")
+        self._update_status()
+
+    def _stop_server(self):
+        if self.api_server:
+            self.api_server.stop()
+        self._append_log("Servidor detenido")
+        self.start_btn.configure(state="normal")
+        self.stop_btn.configure(state="disabled")
+        self.roulette = None
+        self.api_server = None
+        self._update_status()
+
+    # ══════════════════════════════════════════════════════════
+    #  CALLBACKS & HELPERS
+    # ══════════════════════════════════════════════════════════
+
+    def _on_provider_switch(self, provider_id, reason):
+        self.after(0, self._update_status)
+
+    def _append_log(self, msg):
+        ts = datetime.datetime.now().strftime("%H:%M:%S")
+        line = f"[{ts}]  {msg}\n"
+        self.log_lines.append(line)
+        if len(self.log_lines) > 500:
+            self.log_lines = self.log_lines[-400:]
+
+        def _update():
+            self.log_text.configure(state="normal")
+            self.log_text.insert("end", line)
+            self.log_text.see("end")
+            self.log_text.configure(state="disabled")
+        self.after(0, _update)
+
+    def _clear_log(self):
+        self.log_lines.clear()
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.configure(state="disabled")
+
+    def _update_status(self):
+        running = self.roulette and self.api_server and self.api_server.running
+        if running:
+            port = self.config_data.get("server_port", 11411)
+            count = self.roulette.get_active_count()
+            current = self.roulette.get_current_provider_id()
+
+            self.status_dot.configure(text_color=C["green"])
+            self.status_label.configure(text=f"Activo — :{port}")
+            self.status_detail.configure(text=f"{count} proveedores conectados")
+
+            if current:
+                name = PROVIDERS.get(current, {}).get("name", current)
+                self.current_provider_label.configure(text=name)
+            else:
+                self.current_provider_label.configure(text="—")
+        else:
+            self.status_dot.configure(text_color=C["red"])
+            self.status_label.configure(text="Servidor detenido")
+            self.status_detail.configure(text="Sin conexión")
+            self.current_provider_label.configure(text="—")
+
+        for pid, widgets in self.provider_widgets.items():
+            stats = get_stats(self.config_data, pid)
+            widgets["stats_label"].configure(
+                text=f"✓ {stats['requests']}   ✗ {stats['errors']}"
+            )
+
+    def _update_status_loop(self):
+        self._update_status()
+        if self.gadget_window and self.gadget_window.winfo_exists():
+            self._update_gadget()
+        self.after(2000, self._update_status_loop)
+
+    def _save_all(self, quiet=False):
+        for pid, widgets in self.provider_widgets.items():
+            set_api_key(self.config_data, pid, widgets["key_entry"].get().strip())
+            set_enabled(self.config_data, pid, widgets["enabled_var"].get())
+            set_selected_model(self.config_data, pid, widgets["model_var"].get())
+
+        port = self.port_entry.get().strip()
+        if port.isdigit():
+            self.config_data["server_port"] = int(port)
+
+        save_config(self.config_data)
+        if self.roulette:
+            self.roulette.refresh()
+        if not quiet:
+            self._append_log("Configuración guardada")
+
+    def _reset_exhausted(self):
+        if self.roulette:
+            self.roulette.reset_exhausted()
+            self._append_log("Proveedores agotados reseteados")
+        else:
+            messagebox.showinfo("Info", "El servidor no está activo.")
+
+    def _reset_all_stats(self):
+        reset_stats(self.config_data)
+        save_config(self.config_data)
+        self._update_status()
+        self._append_log("Estadísticas reseteadas")
+
+    def _sync_models(self, provider_id):
+        """Fetch real models from the provider API and update the dropdown."""
+        widgets = self.provider_widgets.get(provider_id)
+        if not widgets:
+            return
+
+        api_key = widgets["key_entry"].get().strip()
+        if not api_key:
+            self._append_log(f"⚠ {PROVIDERS[provider_id]['name']}: ingresa una API key primero")
+            return
+
+        prov = PROVIDERS[provider_id]
+        widgets["sync_btn"].configure(text="...", state="disabled")
+        self._append_log(f"⟳ Sincronizando modelos de {prov['name']}...")
+
+        def do_fetch():
+            try:
+                url = f"{prov['base_url']}/models"
+                headers = {
+                    prov["api_key_header"]: f"{prov['api_key_prefix']}{api_key}",
+                    "Content-Type": "application/json",
+                }
+                headers.update(prov.get("extra_headers", {}))
+
+                resp = http_requests.get(url, headers=headers, timeout=15)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    model_list = data.get("data", data.get("models", []))
+                    model_ids = []
+                    for m in model_list:
+                        if isinstance(m, dict):
+                            model_ids.append(m.get("id", m.get("name", "")))
+                        elif isinstance(m, str):
+                            model_ids.append(m)
+                    model_ids = [mid for mid in model_ids if mid]
+
+                    if model_ids:
+                        # Sort and limit
+                        model_ids.sort()
+                        if len(model_ids) > 50:
+                            model_ids = model_ids[:50]
+
+                        # Keep current selection if still valid
+                        current = widgets["model_var"].get()
+
+                        def update_ui():
+                            widgets["model_menu"].configure(values=model_ids)
+                            if current not in model_ids:
+                                widgets["model_var"].set(model_ids[0])
+                            widgets["sync_btn"].configure(text="⟳", state="normal")
+                            self._append_log(
+                                f"✓ {prov['name']}: {len(model_ids)} modelos encontrados"
+                            )
+                        self.after(0, update_ui)
+                        return
+
+                self.after(0, lambda: (
+                    widgets["sync_btn"].configure(text="⟳", state="normal"),
+                    self._append_log(
+                        f"✗ {prov['name']}: HTTP {resp.status_code} al obtener modelos"
+                    )
+                ))
+            except Exception as e:
+                self.after(0, lambda: (
+                    widgets["sync_btn"].configure(text="⟳", state="normal"),
+                    self._append_log(f"✗ {prov['name']}: {e}")
+                ))
+
+        threading.Thread(target=do_fetch, daemon=True).start()
+
+    def on_closing(self):
+        self._save_all(quiet=True)
+        if self.gadget_window and self.gadget_window.winfo_exists():
+            self.gadget_window.destroy()
+        if self.api_server:
+            self.api_server.stop()
+        self.destroy()
