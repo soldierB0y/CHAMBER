@@ -48,6 +48,97 @@ C = {
     "tag_trial":    "#78350f",
 }
 
+I18N = {
+    "es": {
+        "subtitle": "Maximiza tus tokens gratuitos",
+        "server_stopped": "Servidor detenido",
+        "no_connection": "Sin conexión",
+        "current_provider": "PROVEEDOR ACTUAL",
+        "local_port": "PUERTO LOCAL",
+        "start_server": "▶  Iniciar Servidor",
+        "stop_server": "■  Detener Servidor",
+        "tab_chat": "Chat",
+        "tab_providers": "Proveedores",
+        "tab_stats": "Consumo",
+        "tab_settings": "Configuración",
+        "tab_log": "Registro",
+        "tab_info": "Cómo usar",
+        "settings_general": "CONFIGURACIÓN GENERAL",
+        "settings_desc": "Centraliza acciones globales de Chamber desde este módulo.",
+        "settings_language": "IDIOMA",
+        "settings_actions": "ACCIONES",
+        "gadget_mode": "Modo Gadget",
+        "reset_exhausted": "Resetear agotados",
+        "reset_stats": "Resetear estadísticas",
+        "running_on": "Activo",
+        "providers_connected": "proveedores conectados",
+        "settings_port": "PUERTO LOCAL",
+        "settings_port_desc": "Puerto del servidor local (requiere reiniciar servidor)",
+        "info_quick_setup": "Configuración rápida",
+        "info_quick_1": "1.  Haz clic en el nombre de cada proveedor para registrarte",
+        "info_quick_2": "2.  Pega tu API Key y activa el switch",
+        "info_quick_3": "3.  Pulsa  ▶ Iniciar Servidor",
+        "info_quick_4": "4.  Listo — usa http://localhost:11411/v1 como si fuera OpenAI",
+        "info_endpoint": "Endpoint local",
+        "info_ep_key": "API Key:     cualquier valor (no se valida)",
+        "info_ep_model": "Modelo:      auto  (o  proveedor/modelo)",
+        "info_api_doc": "Módulo — Documentación API",
+        "info_api_resp": "  Respuesta: ",
+        "info_api_min_body": "  Body mínimo:",
+        "info_api_params": "Parámetros soportados:",
+        "info_api_compat": "Compatibilidad:",
+        "info_api_compat_fmt": "  formato OpenAI Chat Completions",
+        "info_example_python": "Ejemplo — Python",
+        "info_example_curl": "Ejemplo — curl",
+        "info_compatible": "Compatible con",
+        "info_compatible_any": "·  Cualquier cliente OpenAI",
+    },
+    "en": {
+        "subtitle": "Maximize your free tokens",
+        "server_stopped": "Server stopped",
+        "no_connection": "No connection",
+        "current_provider": "CURRENT PROVIDER",
+        "local_port": "LOCAL PORT",
+        "start_server": "▶  Start Server",
+        "stop_server": "■  Stop Server",
+        "tab_chat": "Chat",
+        "tab_providers": "Providers",
+        "tab_stats": "Usage",
+        "tab_settings": "Settings",
+        "tab_log": "Log",
+        "tab_info": "How to use",
+        "settings_general": "GENERAL SETTINGS",
+        "settings_desc": "Centralize Chamber global actions from this module.",
+        "settings_language": "LANGUAGE",
+        "settings_actions": "ACTIONS",
+        "gadget_mode": "Gadget Mode",
+        "reset_exhausted": "Reset exhausted",
+        "reset_stats": "Reset stats",
+        "running_on": "Active",
+        "providers_connected": "connected providers",
+        "settings_port": "LOCAL PORT",
+        "settings_port_desc": "Local server port (requires server restart)",
+        "info_quick_setup": "Quick Setup",
+        "info_quick_1": "1.  Click on each provider name to sign up",
+        "info_quick_2": "2.  Paste your API Key and toggle the switch",
+        "info_quick_3": "3.  Press  ▶ Start Server",
+        "info_quick_4": "4.  Done — use http://localhost:11411/v1 as if it were OpenAI",
+        "info_endpoint": "Local Endpoint",
+        "info_ep_key": "API Key:     any value (not validated)",
+        "info_ep_model": "Model:       auto  (or  provider/model)",
+        "info_api_doc": "Module — API Documentation",
+        "info_api_resp": "  Response: ",
+        "info_api_min_body": "  Minimum body:",
+        "info_api_params": "Supported parameters:",
+        "info_api_compat": "Compatibility:",
+        "info_api_compat_fmt": "  OpenAI Chat Completions format",
+        "info_example_python": "Example — Python",
+        "info_example_curl": "Example — curl",
+        "info_compatible": "Compatible with",
+        "info_compatible_any": "·  Any OpenAI client",
+    },
+}
+
 
 class ChamberApp(ctk.CTk):
     def __init__(self):
@@ -66,17 +157,24 @@ class ChamberApp(ctk.CTk):
         self._load_logo()
 
         self.config_data = load_config()
+        self.language = self.config_data.get("language", "es")
+        if self.language not in I18N:
+            self.language = "es"
         self.roulette = None
         self.api_server = None
         self.log_lines = []
         self.gadget_window = None
         self.gadget_mode = False
         self._last_stats_snapshot = None
-        self.gadget_chat_messages = []
+        self.chat_messages = list(self.config_data.get("chat_history", []))
 
         self._build_ui()
         self._populate_providers()
+        self._apply_language()
         self._update_status_loop()
+
+    def _t(self, key):
+        return I18N.get(self.language, I18N["es"]).get(key, key)
 
     def _load_logo(self):
         """Load logo.png from project directory if available."""
@@ -142,11 +240,12 @@ class ChamberApp(ctk.CTk):
             font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold"),
             text_color=C["text"]
         ).pack(anchor="w")
-        ctk.CTkLabel(
-            title_col, text="Maximiza tus tokens gratuitos",
+        self.sidebar_subtitle_label = ctk.CTkLabel(
+            title_col, text=self._t("subtitle"),
             font=ctk.CTkFont(size=11),
             text_color=C["text_dim"]
-        ).pack(anchor="w", pady=(2, 0))
+        )
+        self.sidebar_subtitle_label.pack(anchor="w", pady=(2, 0))
 
         # Divider
         ctk.CTkFrame(sb, height=1, fg_color=C["border"]).pack(fill="x", padx=16, pady=8)
@@ -163,14 +262,14 @@ class ChamberApp(ctk.CTk):
         self.status_dot.pack(anchor="w", padx=16, pady=(12, 0))
 
         self.status_label = ctk.CTkLabel(
-            self.status_card, text="Servidor detenido",
+            self.status_card, text=self._t("server_stopped"),
             font=ctk.CTkFont(size=13, weight="bold"), text_color=C["text"],
             anchor="w"
         )
         self.status_label.pack(anchor="w", padx=16)
 
         self.status_detail = ctk.CTkLabel(
-            self.status_card, text="Sin conexión",
+            self.status_card, text=self._t("no_connection"),
             font=ctk.CTkFont(size=11), text_color=C["text_dim"],
             anchor="w"
         )
@@ -181,10 +280,11 @@ class ChamberApp(ctk.CTk):
         self.current_card.pack(fill="x", padx=16, pady=4)
         self.current_card.pack_propagate(False)
 
-        ctk.CTkLabel(
-            self.current_card, text="PROVEEDOR ACTUAL",
+        self.current_provider_title = ctk.CTkLabel(
+            self.current_card, text=self._t("current_provider"),
             font=ctk.CTkFont(size=9), text_color=C["text_muted"], anchor="w"
-        ).pack(anchor="w", padx=16, pady=(10, 0))
+        )
+        self.current_provider_title.pack(anchor="w", padx=16, pady=(10, 0))
 
         self.current_provider_label = ctk.CTkLabel(
             self.current_card, text="—",
@@ -196,27 +296,26 @@ class ChamberApp(ctk.CTk):
         # Divider
         ctk.CTkFrame(sb, height=1, fg_color=C["border"]).pack(fill="x", padx=16, pady=8)
 
-        # Port config
+        # Port display (read-only)
         port_frame = ctk.CTkFrame(sb, fg_color="transparent")
         port_frame.pack(fill="x", padx=16, pady=4)
-        ctk.CTkLabel(
-            port_frame, text="PUERTO LOCAL",
+        self.port_title_label = ctk.CTkLabel(
+            port_frame, text=self._t("local_port"),
             font=ctk.CTkFont(size=9), text_color=C["text_muted"], anchor="w"
-        ).pack(anchor="w")
-        self.port_entry = ctk.CTkEntry(
-            port_frame, height=34, font=ctk.CTkFont(size=13),
-            fg_color=C["input_bg"], border_color=C["border"],
-            text_color=C["text"], corner_radius=8
         )
-        self.port_entry.insert(0, str(self.config_data.get("server_port", 11411)))
-        self.port_entry.pack(fill="x", pady=(4, 0))
+        self.port_title_label.pack(anchor="w")
+        self.port_display_label = ctk.CTkLabel(
+            port_frame, text=str(self.config_data.get("server_port", 11411)),
+            font=ctk.CTkFont(size=13, weight="bold"), text_color=C["accent"], anchor="w"
+        )
+        self.port_display_label.pack(anchor="w", pady=(2, 0))
 
         # Spacer
         ctk.CTkFrame(sb, fg_color="transparent", height=8).pack(fill="x")
 
         # Action buttons
         self.start_btn = ctk.CTkButton(
-            sb, text="▶  Iniciar Servidor", height=42,
+            sb, text=self._t("start_server"), height=42,
             font=ctk.CTkFont(size=13, weight="bold"),
             fg_color=C["green"], hover_color=C["green_hover"],
             text_color="#fff", corner_radius=10,
@@ -225,7 +324,7 @@ class ChamberApp(ctk.CTk):
         self.start_btn.pack(fill="x", padx=16, pady=4)
 
         self.stop_btn = ctk.CTkButton(
-            sb, text="■  Detener Servidor", height=42,
+            sb, text=self._t("stop_server"), height=42,
             font=ctk.CTkFont(size=13, weight="bold"),
             fg_color=C["red"], hover_color=C["red_hover"],
             text_color="#fff", corner_radius=10,
@@ -236,30 +335,8 @@ class ChamberApp(ctk.CTk):
         # Divider
         ctk.CTkFrame(sb, height=1, fg_color=C["border"]).pack(fill="x", padx=16, pady=8)
 
-        # Utility buttons
-        for text, cmd in [
-            ("Modo Gadget", self._toggle_gadget),
-            ("Resetear agotados", self._reset_exhausted),
-            ("Resetear estadísticas", self._reset_all_stats),
-        ]:
-            ctk.CTkButton(
-                sb, text=text, height=32,
-                font=ctk.CTkFont(size=11),
-                fg_color="transparent", hover_color=C["card"],
-                text_color=C["text_dim"], anchor="w",
-                corner_radius=8, command=cmd
-            ).pack(fill="x", padx=16, pady=1)
-
-        # Bottom save button
+        # Spacer
         ctk.CTkFrame(sb, fg_color="transparent").pack(fill="both", expand=True)
-        self.save_btn = ctk.CTkButton(
-            sb, text="Guardar configuración", height=38,
-            font=ctk.CTkFont(size=12),
-            fg_color=C["accent"], hover_color=C["accent_hover"],
-            text_color="#fff", corner_radius=10,
-            command=self._save_all
-        )
-        self.save_btn.pack(fill="x", padx=16, pady=(4, 20))
 
     # ── MAIN HEADER (tab navigation) ─────────────────────────
 
@@ -270,19 +347,13 @@ class ChamberApp(ctk.CTk):
 
         self.nav_buttons = {}
         self.current_tab = "chat"
-        tabs = [
-            ("chat", "Chat"),
-            ("providers", "Proveedores"),
-            ("stats", "Consumo"),
-            ("log", "Registro"),
-            ("info", "Cómo usar"),
-        ]
+        tabs = ["chat", "providers", "stats", "settings", "log", "info"]
         nav_frame = ctk.CTkFrame(header, fg_color="transparent")
         nav_frame.pack(side="left")
 
-        for tab_id, label in tabs:
+        for tab_id in tabs:
             btn = ctk.CTkButton(
-                nav_frame, text=label, height=36, width=120,
+                nav_frame, text=self._t(f"tab_{tab_id}"), height=36, width=120,
                 font=ctk.CTkFont(size=13),
                 fg_color=C["accent"] if tab_id == "chat" else "transparent",
                 hover_color=C["card_hover"],
@@ -318,6 +389,9 @@ class ChamberApp(ctk.CTk):
         self.tab_frames["stats"] = ctk.CTkFrame(self.main, fg_color="transparent")
         self._build_stats_tab(self.tab_frames["stats"])
 
+        self.tab_frames["settings"] = ctk.CTkFrame(self.main, fg_color="transparent")
+        self._build_settings_tab(self.tab_frames["settings"])
+
         self.tab_frames["log"] = ctk.CTkFrame(self.main, fg_color="transparent")
         self._build_log_tab(self.tab_frames["log"])
 
@@ -330,8 +404,6 @@ class ChamberApp(ctk.CTk):
     # ── CHAT TAB ──────────────────────────────────────────────
 
     def _build_chat_tab(self, parent):
-        self.chat_messages = []  # [{"role": ..., "content": ...}]
-
         # Messages area
         self.chat_display = ctk.CTkTextbox(
             parent,
@@ -385,6 +457,7 @@ class ChamberApp(ctk.CTk):
             fg_color=C["input_bg"], border_color=C["border"],
             text_color=C["text"], corner_radius=8
         )
+        self.system_entry.insert(0, self.config_data.get("system_prompt", ""))
         self.system_entry.pack(fill="x", padx=10, pady=8)
 
         self.chat_input = ctk.CTkEntry(
@@ -415,6 +488,8 @@ class ChamberApp(ctk.CTk):
         )
         self.clear_chat_btn.pack(side="right", padx=2, pady=10)
 
+        self._render_chat_history()
+
     def _toggle_system_prompt(self):
         if self.system_visible:
             self.system_frame.pack_forget()
@@ -438,6 +513,7 @@ class ChamberApp(ctk.CTk):
 
         # Append user message
         self.chat_messages.append({"role": "user", "content": text})
+        self._persist_chat_state()
         self._chat_append_user(text)
 
         # Build messages for API
@@ -447,7 +523,11 @@ class ChamberApp(ctk.CTk):
             sys_text = self.system_entry.get().strip()
         if sys_text:
             api_messages.append({"role": "system", "content": sys_text})
-        api_messages.extend(self.chat_messages)
+        api_messages.extend(
+            {"role": msg.get("role", "user"), "content": msg.get("content", "")}
+            for msg in self.chat_messages
+            if msg.get("role") in ("user", "assistant")
+        )
 
         # Send in background thread
         def do_request():
@@ -462,7 +542,10 @@ class ChamberApp(ctk.CTk):
                     provider = self.roulette.get_current_provider_id()
                     prov_name = PROVIDERS.get(provider, {}).get("name", provider)
                     tag = f"{prov_name}" + (f" · {model}" if model else "")
-                    self.chat_messages.append({"role": "assistant", "content": content})
+                    self.chat_messages.append(
+                        {"role": "assistant", "content": content, "provider_tag": tag}
+                    )
+                    self._persist_chat_state()
                     self.after(0, lambda c=content, t=tag: self._chat_append_assistant(c, t))
             except Exception as e:
                 self.after(0, lambda: self._chat_append_system(f"Error: {e}"))
@@ -496,9 +579,28 @@ class ChamberApp(ctk.CTk):
 
     def _clear_chat(self):
         self.chat_messages.clear()
+        self._persist_chat_state()
         self.chat_display.configure(state="normal")
         self.chat_display.delete("1.0", "end")
         self.chat_display.configure(state="disabled")
+
+    def _persist_chat_state(self):
+        self.config_data["chat_history"] = self.chat_messages[-100:]
+        if hasattr(self, "system_entry"):
+            self.config_data["system_prompt"] = self.system_entry.get().strip()
+        save_config(self.config_data)
+
+    def _render_chat_history(self):
+        self.chat_display.configure(state="normal")
+        self.chat_display.delete("1.0", "end")
+        self.chat_display.configure(state="disabled")
+        for msg in self.chat_messages:
+            role = msg.get("role")
+            content = msg.get("content", "")
+            if role == "user":
+                self._chat_append_user(content)
+            elif role == "assistant":
+                self._chat_append_assistant(content, msg.get("provider_tag", ""))
 
     # ── PROVIDERS TAB ─────────────────────────────────────────
 
@@ -732,48 +834,260 @@ class ChamberApp(ctk.CTk):
         )
         self.log_text.pack(fill="both", expand=True)
 
-    # ── INFO TAB ──────────────────────────────────────────────
-
-    def _build_info_tab(self, parent):
+    def _build_settings_tab(self, parent):
         scroll = ctk.CTkScrollableFrame(
             parent, fg_color="transparent",
-            scrollbar_button_color=C["border"]
+            scrollbar_button_color=C["border"],
+            scrollbar_button_hover_color=C["text_muted"]
         )
         scroll.pack(fill="both", expand=True)
 
-        sections = [
-            ("Configuración rápida", [
-                "1.  Haz clic en el nombre de cada proveedor para registrarte",
-                "2.  Pega tu API Key y activa el switch",
-                "3.  Pulsa  ▶ Iniciar Servidor",
-                "4.  Listo — usa http://localhost:11411/v1 como si fuera OpenAI",
+        top_card = ctk.CTkFrame(
+            scroll, fg_color=C["card"], corner_radius=12,
+            border_width=1, border_color=C["border"]
+        )
+        top_card.pack(fill="x", pady=(0, 10))
+
+        ctk.CTkLabel(
+            top_card, text=self._t("settings_general"),
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=C["text_muted"], anchor="w"
+        ).pack(fill="x", padx=18, pady=(14, 4))
+
+        self.settings_desc_label = ctk.CTkLabel(
+            top_card,
+            text=self._t("settings_desc"),
+            font=ctk.CTkFont(size=12),
+            text_color=C["text_dim"], anchor="w"
+        )
+        self.settings_desc_label.pack(fill="x", padx=18, pady=(0, 14))
+
+        language_card = ctk.CTkFrame(
+            scroll, fg_color=C["card"], corner_radius=12,
+            border_width=1, border_color=C["border"]
+        )
+        language_card.pack(fill="x", pady=6)
+
+        self.settings_language_title = ctk.CTkLabel(
+            language_card, text=self._t("settings_language"),
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=C["text_muted"], anchor="w"
+        )
+        self.settings_language_title.pack(fill="x", padx=18, pady=(14, 8))
+
+        self.language_var = ctk.StringVar(value="Español" if self.language == "es" else "English")
+        self.language_menu = ctk.CTkOptionMenu(
+            language_card,
+            variable=self.language_var,
+            values=["Español", "English"],
+            height=36, font=ctk.CTkFont(size=12),
+            fg_color=C["input_bg"], button_color=C["border"],
+            button_hover_color=C["text_muted"],
+            dropdown_fg_color=C["surface"],
+            dropdown_hover_color=C["card"],
+            text_color=C["text"],
+            corner_radius=8,
+            command=self._on_language_change,
+        )
+        self.language_menu.pack(fill="x", padx=18, pady=(0, 14))
+
+        port_card = ctk.CTkFrame(
+            scroll, fg_color=C["card"], corner_radius=12,
+            border_width=1, border_color=C["border"]
+        )
+        port_card.pack(fill="x", pady=6)
+
+        self.settings_port_title = ctk.CTkLabel(
+            port_card, text=self._t("settings_port"),
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=C["text_muted"], anchor="w"
+        )
+        self.settings_port_title.pack(fill="x", padx=18, pady=(14, 2))
+
+        self.settings_port_desc = ctk.CTkLabel(
+            port_card, text=self._t("settings_port_desc"),
+            font=ctk.CTkFont(size=11),
+            text_color=C["text_dim"], anchor="w"
+        )
+        self.settings_port_desc.pack(fill="x", padx=18, pady=(0, 8))
+
+        self.port_entry = ctk.CTkEntry(
+            port_card, height=36, font=ctk.CTkFont(size=13),
+            fg_color=C["input_bg"], border_color=C["border"],
+            text_color=C["text"], corner_radius=8
+        )
+        self.port_entry.insert(0, str(self.config_data.get("server_port", 11411)))
+        self.port_entry.pack(fill="x", padx=18, pady=(0, 14))
+        self.port_entry.bind("<FocusOut>", self._on_port_change)
+        self.port_entry.bind("<Return>", self._on_port_change)
+
+        actions_card = ctk.CTkFrame(
+            scroll, fg_color=C["card"], corner_radius=12,
+            border_width=1, border_color=C["border"]
+        )
+        actions_card.pack(fill="x", pady=6)
+
+        self.settings_actions_title = ctk.CTkLabel(
+            actions_card, text=self._t("settings_actions"),
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=C["text_muted"], anchor="w"
+        )
+        self.settings_actions_title.pack(fill="x", padx=18, pady=(14, 10))
+
+        self.settings_gadget_btn = ctk.CTkButton(
+            actions_card, text=self._t("gadget_mode"), height=38,
+            font=ctk.CTkFont(size=12),
+            fg_color=C["input_bg"], hover_color=C["card_hover"],
+            text_color=C["text"], corner_radius=10,
+            command=self._toggle_gadget
+        )
+        self.settings_gadget_btn.pack(fill="x", padx=18, pady=4)
+
+        self.settings_reset_exhausted_btn = ctk.CTkButton(
+            actions_card, text=self._t("reset_exhausted"), height=38,
+            font=ctk.CTkFont(size=12),
+            fg_color=C["input_bg"], hover_color=C["card_hover"],
+            text_color=C["text"], corner_radius=10,
+            command=self._reset_exhausted
+        )
+        self.settings_reset_exhausted_btn.pack(fill="x", padx=18, pady=4)
+
+        self.settings_reset_stats_btn = ctk.CTkButton(
+            actions_card, text=self._t("reset_stats"), height=38,
+            font=ctk.CTkFont(size=12),
+            fg_color=C["input_bg"], hover_color=C["card_hover"],
+            text_color=C["text"], corner_radius=10,
+            command=self._reset_all_stats
+        )
+        self.settings_reset_stats_btn.pack(fill="x", padx=18, pady=(4, 18))
+
+    def _on_language_change(self, selected):
+        self.language = "en" if selected == "English" else "es"
+        self.config_data["language"] = self.language
+        save_config(self.config_data)
+        self._apply_language()
+
+    def _on_port_change(self, event=None):
+        raw = self.port_entry.get().strip()
+        try:
+            port = int(raw)
+            if not (1 <= port <= 65535):
+                raise ValueError
+        except ValueError:
+            port = self.config_data.get("server_port", 11411)
+            self.port_entry.delete(0, "end")
+            self.port_entry.insert(0, str(port))
+        self.config_data["server_port"] = port
+        save_config(self.config_data)
+        if hasattr(self, "port_display_label"):
+            self.port_display_label.configure(text=str(port))
+
+    def _apply_language(self):
+        if hasattr(self, "sidebar_subtitle_label"):
+            self.sidebar_subtitle_label.configure(text=self._t("subtitle"))
+        if hasattr(self, "current_provider_title"):
+            self.current_provider_title.configure(text=self._t("current_provider"))
+        if hasattr(self, "port_title_label"):
+            self.port_title_label.configure(text=self._t("local_port"))
+        if hasattr(self, "start_btn"):
+            self.start_btn.configure(text=self._t("start_server"))
+        if hasattr(self, "stop_btn"):
+            self.stop_btn.configure(text=self._t("stop_server"))
+
+        for tab_id, btn in self.nav_buttons.items():
+            btn.configure(text=self._t(f"tab_{tab_id}"))
+
+        if hasattr(self, "settings_desc_label"):
+            self.settings_desc_label.configure(text=self._t("settings_desc"))
+        if hasattr(self, "settings_language_title"):
+            self.settings_language_title.configure(text=self._t("settings_language"))
+        if hasattr(self, "settings_actions_title"):
+            self.settings_actions_title.configure(text=self._t("settings_actions"))
+        if hasattr(self, "settings_gadget_btn"):
+            self.settings_gadget_btn.configure(text=self._t("gadget_mode"))
+        if hasattr(self, "settings_reset_exhausted_btn"):
+            self.settings_reset_exhausted_btn.configure(text=self._t("reset_exhausted"))
+        if hasattr(self, "settings_reset_stats_btn"):
+            self.settings_reset_stats_btn.configure(text=self._t("reset_stats"))
+
+        if hasattr(self, "settings_port_title"):
+            self.settings_port_title.configure(text=self._t("settings_port"))
+        if hasattr(self, "settings_port_desc"):
+            self.settings_port_desc.configure(text=self._t("settings_port_desc"))
+
+        if hasattr(self, "status_label"):
+            self._update_status()
+
+        if hasattr(self, "_info_parent"):
+            self._rebuild_info_content()
+
+    # ── INFO TAB ──────────────────────────────────────────────
+
+    def _build_info_tab(self, parent):
+        self._info_parent = parent
+        self._rebuild_info_content()
+
+    def _get_info_sections(self):
+        return [
+            (self._t("info_quick_setup"), [
+                self._t("info_quick_1"),
+                self._t("info_quick_2"),
+                self._t("info_quick_3"),
+                self._t("info_quick_4"),
             ]),
-            ("Endpoint local", [
+            (self._t("info_endpoint"), [
                 "Base URL:    http://localhost:11411/v1",
-                "API Key:     cualquier valor (no se valida)",
-                "Modelo:      auto  (o  proveedor/modelo)",
+                self._t("info_ep_key"),
+                self._t("info_ep_model"),
             ]),
-            ("Ejemplo — Python", [
+            (self._t("info_api_doc"), [
+                "GET  /health",
+                self._t("info_api_resp") + '{"status":"ok","active_providers":N,"current_provider":"id"}',
+                "",
+                "GET  /v1/models",
+                self._t("info_api_resp") + '{"object":"list","data":[{"id":"...","owned_by":"..."}]}',
+                "",
+                "POST /v1/chat/completions",
+                self._t("info_api_min_body"),
+                '  {"model":"auto","messages":[{"role":"user","content":"Hello"}]}',
+                "",
+                self._t("info_api_params"),
+                "  model, messages, temperature, max_tokens, top_p",
+                "",
+                self._t("info_api_compat"),
+                self._t("info_api_compat_fmt"),
+            ]),
+            (self._t("info_example_python"), [
                 "from openai import OpenAI",
                 'client = OpenAI(base_url="http://localhost:11411/v1", api_key="x")',
                 "r = client.chat.completions.create(",
                 '    model="auto",',
-                '    messages=[{"role":"user","content":"Hola!"}]',
+                '    messages=[{"role":"user","content":"Hello!"}]',
                 ")",
                 "print(r.choices[0].message.content)",
             ]),
-            ("Ejemplo — curl", [
+            (self._t("info_example_curl"), [
                 "curl http://localhost:11411/v1/chat/completions \\",
                 '  -H "Content-Type: application/json" \\',
-                '  -d \'{"model":"auto","messages":[{"role":"user","content":"Hola!"}]}\'',
+                '  -d \'{"model":"auto","messages":[{"role":"user","content":"Hello!"}]}\'',
             ]),
-            ("Compatible con", [
+            (self._t("info_compatible"), [
                 "·  Continue (VS Code)     ·  Open WebUI",
-                "·  LangChain / LlamaIndex ·  Cualquier cliente OpenAI",
+                "·  LangChain / LlamaIndex " + self._t("info_compatible_any"),
             ]),
         ]
 
-        for title, lines in sections:
+    def _rebuild_info_content(self):
+        for w in self._info_parent.winfo_children():
+            w.destroy()
+
+        scroll = ctk.CTkScrollableFrame(
+            self._info_parent, fg_color="transparent",
+            scrollbar_button_color=C["border"]
+        )
+        scroll.pack(fill="both", expand=True)
+
+        for title, lines in self._get_info_sections():
             sec = ctk.CTkFrame(scroll, fg_color=C["card"], corner_radius=12)
             sec.pack(fill="x", pady=6)
 
@@ -1129,6 +1443,7 @@ class ChamberApp(ctk.CTk):
         )
         self._gadget_chat_box.pack(fill="both", expand=True)
         self._gadget_chat_box.configure(state="disabled")
+        self._render_gadget_chat_history()
 
         gadget_input_row = ctk.CTkFrame(chat_frame, fg_color="transparent")
         gadget_input_row.pack(fill="x", pady=(6, 0))
@@ -1185,6 +1500,8 @@ class ChamberApp(ctk.CTk):
         self.deiconify()
         self.lift()
         self.focus_force()
+        if hasattr(self, "chat_display"):
+            self._render_chat_history()
 
     def _update_gadget(self):
         """Update gadget widget with current status."""
@@ -1225,6 +1542,20 @@ class ChamberApp(ctk.CTk):
         self._gadget_chat_box.see("end")
         self._gadget_chat_box.configure(state="disabled")
 
+    def _render_gadget_chat_history(self):
+        if not self.gadget_window or not self.gadget_window.winfo_exists():
+            return
+        self._gadget_chat_box.configure(state="normal")
+        self._gadget_chat_box.delete("1.0", "end")
+        self._gadget_chat_box.configure(state="disabled")
+        for msg in self.chat_messages:
+            role = msg.get("role")
+            content = msg.get("content", "")
+            if role == "user":
+                self._append_gadget_chat("Tu", content)
+            elif role == "assistant":
+                self._append_gadget_chat("AI", content)
+
     def _send_gadget_message(self):
         """Send a chat message from gadget mode."""
         if not self.gadget_window or not self.gadget_window.winfo_exists():
@@ -1238,10 +1569,15 @@ class ChamberApp(ctk.CTk):
 
         self._gadget_chat_input.delete(0, "end")
         self._gadget_send_btn.configure(state="disabled", text="...")
-        self.gadget_chat_messages.append({"role": "user", "content": text})
+        self.chat_messages.append({"role": "user", "content": text})
+        self._persist_chat_state()
         self._append_gadget_chat("Tu", text)
 
-        payload_messages = list(self.gadget_chat_messages)
+        payload_messages = [
+            {"role": msg.get("role", "user"), "content": msg.get("content", "")}
+            for msg in self.chat_messages
+            if msg.get("role") in ("user", "assistant")
+        ]
 
         def do_request():
             try:
@@ -1251,7 +1587,14 @@ class ChamberApp(ctk.CTk):
                     self.after(0, lambda: self._append_gadget_chat("Sistema", f"Error: {err}"))
                 else:
                     content = result["choices"][0]["message"]["content"]
-                    self.gadget_chat_messages.append({"role": "assistant", "content": content})
+                    model = result.get("model", "")
+                    provider = self.roulette.get_current_provider_id()
+                    prov_name = PROVIDERS.get(provider, {}).get("name", provider)
+                    tag = f"{prov_name}" + (f" · {model}" if model else "")
+                    self.chat_messages.append(
+                        {"role": "assistant", "content": content, "provider_tag": tag}
+                    )
+                    self._persist_chat_state()
                     self.after(0, lambda c=content: self._append_gadget_chat("AI", c))
             except Exception as e:
                 self.after(0, lambda: self._append_gadget_chat("Sistema", f"Error: {e}"))
@@ -1346,8 +1689,8 @@ class ChamberApp(ctk.CTk):
             current = self.roulette.get_current_provider_id()
 
             self.status_dot.configure(text_color=C["green"])
-            self.status_label.configure(text=f"Activo — :{port}")
-            self.status_detail.configure(text=f"{count} proveedores conectados")
+            self.status_label.configure(text=f"{self._t('running_on')} — :{port}")
+            self.status_detail.configure(text=f"{count} {self._t('providers_connected')}")
 
             if current:
                 name = PROVIDERS.get(current, {}).get("name", current)
@@ -1356,8 +1699,8 @@ class ChamberApp(ctk.CTk):
                 self.current_provider_label.configure(text="—")
         else:
             self.status_dot.configure(text_color=C["red"])
-            self.status_label.configure(text="Servidor detenido")
-            self.status_detail.configure(text="Sin conexión")
+            self.status_label.configure(text=self._t("server_stopped"))
+            self.status_detail.configure(text=self._t("no_connection"))
             self.current_provider_label.configure(text="—")
 
         for pid, widgets in self.provider_widgets.items():
@@ -1383,6 +1726,9 @@ class ChamberApp(ctk.CTk):
         port = self.port_entry.get().strip()
         if port.isdigit():
             self.config_data["server_port"] = int(port)
+        if hasattr(self, "system_entry"):
+            self.config_data["system_prompt"] = self.system_entry.get().strip()
+        self.config_data["chat_history"] = self.chat_messages[-100:]
 
         save_config(self.config_data)
         if self.roulette:
