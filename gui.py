@@ -74,6 +74,10 @@ I18N = {
         "providers_connected": "proveedores conectados",
         "settings_port": "PUERTO LOCAL",
         "settings_port_desc": "Puerto del servidor local (requiere reiniciar servidor)",
+        "settings_stream": "STREAMING",
+        "settings_stream_desc": "Permitir respuestas en streaming (SSE). Desactívalo si el cliente no muestra las respuestas.",
+        "settings_stream_on": "Activado",
+        "settings_stream_off": "Desactivado",
         "info_quick_setup": "Configuración rápida",
         "info_quick_1": "1.  Haz clic en el nombre de cada proveedor para registrarte",
         "info_quick_2": "2.  Pega tu API Key y activa el switch",
@@ -118,6 +122,10 @@ I18N = {
         "providers_connected": "connected providers",
         "settings_port": "LOCAL PORT",
         "settings_port_desc": "Local server port (requires server restart)",
+        "settings_stream": "STREAMING",
+        "settings_stream_desc": "Allow streaming responses (SSE). Disable if the client doesn't display responses.",
+        "settings_stream_on": "Enabled",
+        "settings_stream_off": "Disabled",
         "info_quick_setup": "Quick Setup",
         "info_quick_1": "1.  Click on each provider name to sign up",
         "info_quick_2": "2.  Paste your API Key and toggle the switch",
@@ -188,6 +196,11 @@ class ChamberApp(ctk.CTk):
                 pil_img = Image.open(logo_path)
                 self._logo_image = ctk.CTkImage(pil_img, size=(48, 48))
                 self._logo_icon = ctk.CTkImage(pil_img, size=(28, 28))
+                # Pre-render rotated frames for spinner animation
+                self._spinner_frames = []
+                for angle in range(0, 360, 30):
+                    rotated = pil_img.rotate(-angle, resample=Image.BICUBIC)
+                    self._spinner_frames.append(ctk.CTkImage(rotated, size=(24, 24)))
             except Exception:
                 pass
         # Set window icon (.ico for Windows)
@@ -488,6 +501,23 @@ class ChamberApp(ctk.CTk):
         )
         self.clear_chat_btn.pack(side="right", padx=2, pady=10)
 
+        # Spinner overlay (hidden by default)
+        self._spinner_frame_idx = 0
+        self._spinner_active = False
+        self._chat_spinner_frame = ctk.CTkFrame(
+            parent, fg_color=C["card"], corner_radius=10, height=40
+        )
+        self._chat_spinner_label = ctk.CTkLabel(
+            self._chat_spinner_frame, text="",
+            image=self._spinner_frames[0] if getattr(self, "_spinner_frames", None) else None,
+        )
+        self._chat_spinner_label.pack(side="left", padx=(12, 6), pady=6)
+        self._chat_spinner_text = ctk.CTkLabel(
+            self._chat_spinner_frame, text="Pensando...",
+            font=ctk.CTkFont(size=12), text_color=C["text_dim"]
+        )
+        self._chat_spinner_text.pack(side="left", pady=6)
+
         self._render_chat_history()
 
     def _toggle_system_prompt(self):
@@ -515,6 +545,7 @@ class ChamberApp(ctk.CTk):
         self.chat_messages.append({"role": "user", "content": text})
         self._persist_chat_state()
         self._chat_append_user(text)
+        self._show_chat_spinner()
 
         # Build messages for API
         api_messages = []
@@ -550,6 +581,7 @@ class ChamberApp(ctk.CTk):
             except Exception as e:
                 self.after(0, lambda: self._chat_append_system(f"Error: {e}"))
             finally:
+                self.after(0, self._hide_chat_spinner)
                 self.after(0, lambda: self.send_btn.configure(state="normal", text="Enviar"))
 
         threading.Thread(target=do_request, daemon=True).start()
@@ -576,6 +608,27 @@ class ChamberApp(ctk.CTk):
         self.chat_display._textbox.insert("end", f"{text}\n\n", "system_msg")
         self.chat_display.see("end")
         self.chat_display.configure(state="disabled")
+
+    def _show_chat_spinner(self):
+        self._spinner_active = True
+        self._spinner_frame_idx = 0
+        self._chat_spinner_frame.pack(fill="x", pady=(4, 0), before=self.chat_display.master.winfo_children()[-1] if False else None)
+        # Place after chat display, before input
+        self._chat_spinner_frame.pack_forget()
+        self._chat_spinner_frame.pack(fill="x", pady=(0, 4), after=self.chat_display)
+        self._animate_spinner()
+
+    def _hide_chat_spinner(self):
+        self._spinner_active = False
+        self._chat_spinner_frame.pack_forget()
+
+    def _animate_spinner(self):
+        if not self._spinner_active:
+            return
+        if getattr(self, "_spinner_frames", None):
+            self._spinner_frame_idx = (self._spinner_frame_idx + 1) % len(self._spinner_frames)
+            self._chat_spinner_label.configure(image=self._spinner_frames[self._spinner_frame_idx])
+        self.after(80, self._animate_spinner)
 
     def _clear_chat(self):
         self.chat_messages.clear()
@@ -921,6 +974,43 @@ class ChamberApp(ctk.CTk):
         self.port_entry.bind("<FocusOut>", self._on_port_change)
         self.port_entry.bind("<Return>", self._on_port_change)
 
+        stream_card = ctk.CTkFrame(
+            scroll, fg_color=C["card"], corner_radius=12,
+            border_width=1, border_color=C["border"]
+        )
+        stream_card.pack(fill="x", pady=6)
+
+        self.settings_stream_title = ctk.CTkLabel(
+            stream_card, text=self._t("settings_stream"),
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=C["text_muted"], anchor="w"
+        )
+        self.settings_stream_title.pack(fill="x", padx=18, pady=(14, 2))
+
+        self.settings_stream_desc = ctk.CTkLabel(
+            stream_card, text=self._t("settings_stream_desc"),
+            font=ctk.CTkFont(size=11),
+            text_color=C["text_dim"], anchor="w", wraplength=500
+        )
+        self.settings_stream_desc.pack(fill="x", padx=18, pady=(0, 8))
+
+        stream_row = ctk.CTkFrame(stream_card, fg_color="transparent")
+        stream_row.pack(fill="x", padx=18, pady=(0, 14))
+
+        self.stream_var = ctk.BooleanVar(value=self.config_data.get("stream_enabled", False))
+        self.stream_switch = ctk.CTkSwitch(
+            stream_row, text=self._t("settings_stream_on") if self.stream_var.get() else self._t("settings_stream_off"),
+            variable=self.stream_var,
+            font=ctk.CTkFont(size=12),
+            text_color=C["text"],
+            fg_color=C["border"],
+            progress_color=C["green"],
+            button_color=C["text"],
+            button_hover_color=C["accent"],
+            command=self._on_stream_change
+        )
+        self.stream_switch.pack(side="left")
+
         actions_card = ctk.CTkFrame(
             scroll, fg_color=C["card"], corner_radius=12,
             border_width=1, border_color=C["border"]
@@ -966,6 +1056,13 @@ class ChamberApp(ctk.CTk):
         self.config_data["language"] = self.language
         save_config(self.config_data)
         self._apply_language()
+
+    def _on_stream_change(self):
+        enabled = self.stream_var.get()
+        self.config_data["stream_enabled"] = enabled
+        save_config(self.config_data)
+        label = self._t("settings_stream_on") if enabled else self._t("settings_stream_off")
+        self.stream_switch.configure(text=label)
 
     def _on_port_change(self, event=None):
         raw = self.port_entry.get().strip()
@@ -1014,6 +1111,13 @@ class ChamberApp(ctk.CTk):
             self.settings_port_title.configure(text=self._t("settings_port"))
         if hasattr(self, "settings_port_desc"):
             self.settings_port_desc.configure(text=self._t("settings_port_desc"))
+        if hasattr(self, "settings_stream_title"):
+            self.settings_stream_title.configure(text=self._t("settings_stream"))
+        if hasattr(self, "settings_stream_desc"):
+            self.settings_stream_desc.configure(text=self._t("settings_stream_desc"))
+        if hasattr(self, "stream_switch"):
+            enabled = self.stream_var.get()
+            self.stream_switch.configure(text=self._t("settings_stream_on") if enabled else self._t("settings_stream_off"))
 
         if hasattr(self, "status_label"):
             self._update_status()

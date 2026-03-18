@@ -45,10 +45,13 @@ def chat_completions():
 
     # Extraer modelo específico si se pide uno de un proveedor
     model = data.get("model")
+    # Usar config de stream del roulette (toggle en Configuración)
+    stream_enabled = _roulette.config.get("stream_enabled", False) if _roulette else False
     kwargs = {
         "temperature": data.get("temperature"),
         "max_tokens": data.get("max_tokens"),
         "top_p": data.get("top_p"),
+        "stream": stream_enabled,
     }
 
     # Si el modelo es "provider_id/model_name", seleccionar ese proveedor
