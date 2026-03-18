@@ -87,7 +87,10 @@ class Roulette:
         """
         Envía una petición de chat completion rotando proveedores si falla.
         Retorna la respuesta del proveedor o un error si todos están agotados.
+        Si stream=True en kwargs, retorna dict con '_stream' key conteniendo el generador SSE.
         """
+        is_stream = kwargs.get("stream", False)
+
         with self.lock:
             self._build_active_list()
 
@@ -106,6 +109,30 @@ class Roulette:
                 break
 
             prov = PROVIDERS[provider_id]
+
+            if is_stream:
+                result = self._call_provider_stream(provider_id, prov, messages, **kwargs)
+                if result.get("_success"):
+                    increment_stat(self.config, provider_id, "requests")
+                    save_config(self.config)
+                    return result
+                # Stream failed, try rotation
+                status_code = result.get("_status_code", 0)
+                body = json.dumps(result)
+                if self._is_exhaustion_error(status_code, body):
+                    increment_stat(self.config, provider_id, "errors")
+                    error_msg = result.get("error", {}).get("message", "Cuota agotada")
+                    increment_stat(self.config, provider_id, "last_error", error_msg)
+                    save_config(self.config)
+                    with self.lock:
+                        if not self._rotate(f"Cuota/Rate limit (HTTP {status_code})"):
+                            break
+                else:
+                    increment_stat(self.config, provider_id, "errors")
+                    save_config(self.config)
+                    return result
+                continue
+
             result = self._call_provider(provider_id, prov, messages, **kwargs)
 
             if result.get("_success"):
@@ -189,6 +216,56 @@ class Roulette:
                 data = {"error": {"message": resp.text}}
             data["_status_code"] = resp.status_code
             data["_success"] = 200 <= resp.status_code < 300
+            return data
+        except http_requests.exceptions.Timeout:
+            return {"_success": False, "_status_code": 408,
+                    "error": {"message": "Timeout de conexión"}}
+        except http_requests.exceptions.ConnectionError:
+            return {"_success": False, "_status_code": 0,
+                    "error": {"message": "Error de conexión"}}
+        except Exception as e:
+            return {"_success": False, "_status_code": 0,
+                    "error": {"message": str(e)}}
+
+    def _call_provider_stream(self, provider_id: str, prov: dict, messages: list, **kwargs) -> dict:
+        """Hace la llamada HTTP con stream=True y retorna el response raw."""
+        api_key = get_api_key(self.config, provider_id)
+        model = kwargs.pop("model", None) or get_selected_model(self.config, provider_id)
+        kwargs.pop("stream", None)
+
+        if prov.get("custom_format") == "cohere":
+            return {"_success": False, "_status_code": 0,
+                    "error": {"message": "Cohere no soporta streaming en Chamber"}}
+
+        url = f"{prov['base_url']}/chat/completions"
+        headers = {
+            prov["api_key_header"]: f"{prov['api_key_prefix']}{api_key}",
+            "Content-Type": "application/json",
+        }
+        headers.update(prov.get("extra_headers", {}))
+
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": True,
+        }
+        for key in ("temperature", "max_tokens", "top_p"):
+            if key in kwargs and kwargs[key] is not None:
+                payload[key] = kwargs[key]
+
+        self._log(f"→ {prov['name']} [{model}] (stream)")
+
+        try:
+            resp = http_requests.post(url, json=payload, headers=headers, timeout=120, stream=True)
+            if 200 <= resp.status_code < 300:
+                return {"_success": True, "_stream": resp.iter_lines(), "_raw_resp": resp}
+            # Error — read body for error detection
+            try:
+                data = resp.json()
+            except ValueError:
+                data = {"error": {"message": resp.text}}
+            data["_status_code"] = resp.status_code
+            data["_success"] = False
             return data
         except http_requests.exceptions.Timeout:
             return {"_success": False, "_status_code": 408,

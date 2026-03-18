@@ -63,6 +63,30 @@ def chat_completions():
 
     result = _roulette.chat_completion(messages, **kwargs)
 
+    # If streaming, proxy the SSE response directly
+    if "_stream" in result:
+        def generate():
+            try:
+                for line in result["_stream"]:
+                    if isinstance(line, bytes):
+                        line = line.decode("utf-8")
+                    if line:
+                        yield f"{line}\n\n"
+                yield "data: [DONE]\n\n"
+            finally:
+                raw = result.get("_raw_resp")
+                if raw:
+                    raw.close()
+        return Response(
+            generate(),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Access-Control-Allow-Origin": "*",
+            }
+        )
+
     if "error" in result and "choices" not in result:
         return jsonify(result), 502
 
