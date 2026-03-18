@@ -148,8 +148,13 @@ class APIServer:
         self.thread.start()
 
     def _run(self):
+        from werkzeug.serving import make_server
+        self._server = make_server("127.0.0.1", self.port, app)
         _log(f"🚀 Servidor API iniciado en http://localhost:{self.port}/v1")
-        app.run(host="127.0.0.1", port=self.port, use_reloader=False)
+        self._server.serve_forever()
 
     def stop(self):
         self.running = False
+        if hasattr(self, "_server") and self._server:
+            self._server.shutdown()
+        set_roulette(None)
