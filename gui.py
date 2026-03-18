@@ -179,8 +179,11 @@ class ChamberApp(ctk.CTk):
         # Multi-conversation system
         self._migrate_legacy_chat()
         self.conversations = list(self.config_data.get("conversations", []))
-        # Always start with a new empty chat
-        self._current_conv_id = self._create_new_conversation(switch=False)
+        # Resume last conversation if it has messages, otherwise new chat
+        if self.conversations and self.conversations[0].get("messages"):
+            self._current_conv_id = self.conversations[0]["id"]
+        else:
+            self._current_conv_id = self._create_new_conversation(switch=False)
         self.chat_messages = self._get_current_conv()["messages"]
 
         self._build_ui()
@@ -554,6 +557,7 @@ class ChamberApp(ctk.CTk):
         self._chat_spinner_text.pack(side="left", pady=6)
 
         self._render_chat_history()
+        self._refresh_conv_list()
 
     def _toggle_system_prompt(self):
         if self.system_visible:
