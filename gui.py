@@ -7,6 +7,7 @@ import datetime
 import threading
 import webbrowser
 import os
+import uuid
 import customtkinter as ctk
 from tkinter import messagebox
 import requests as http_requests
@@ -174,7 +175,13 @@ class ChamberApp(ctk.CTk):
         self.gadget_window = None
         self.gadget_mode = False
         self._last_stats_snapshot = None
-        self.chat_messages = list(self.config_data.get("chat_history", []))
+
+        # Multi-conversation system
+        self._migrate_legacy_chat()
+        self.conversations = list(self.config_data.get("conversations", []))
+        # Always start with a new empty chat
+        self._current_conv_id = self._create_new_conversation(switch=False)
+        self.chat_messages = self._get_current_conv()["messages"]
 
         self._build_ui()
         self._populate_providers()
@@ -417,9 +424,37 @@ class ChamberApp(ctk.CTk):
     # ── CHAT TAB ──────────────────────────────────────────────
 
     def _build_chat_tab(self, parent):
+        # Horizontal layout: conversation list | chat area
+        chat_container = ctk.CTkFrame(parent, fg_color="transparent")
+        chat_container.pack(fill="both", expand=True)
+
+        # ── Conversation sidebar ──
+        self._conv_sidebar = ctk.CTkFrame(chat_container, fg_color=C["surface"], width=220, corner_radius=12)
+        self._conv_sidebar.pack(side="left", fill="y", padx=(0, 8))
+        self._conv_sidebar.pack_propagate(False)
+
+        new_chat_btn = ctk.CTkButton(
+            self._conv_sidebar, text="+ Nuevo chat", height=36,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            fg_color=C["accent"], hover_color=C["accent_hover"],
+            text_color="#fff", corner_radius=8,
+            command=self._new_chat
+        )
+        new_chat_btn.pack(fill="x", padx=10, pady=(10, 6))
+
+        self._conv_list_frame = ctk.CTkScrollableFrame(
+            self._conv_sidebar, fg_color="transparent",
+            scrollbar_button_color=C["border"]
+        )
+        self._conv_list_frame.pack(fill="both", expand=True, padx=4, pady=(0, 8))
+
+        # ── Chat area ──
+        chat_area = ctk.CTkFrame(chat_container, fg_color="transparent")
+        chat_area.pack(side="left", fill="both", expand=True)
+
         # Messages area
         self.chat_display = ctk.CTkTextbox(
-            parent,
+            chat_area,
             font=ctk.CTkFont(family="Segoe UI", size=13),
             fg_color=C["surface"], text_color=C["text"],
             corner_radius=12, border_width=1, border_color=C["border"],
@@ -446,7 +481,7 @@ class ChamberApp(ctk.CTk):
         )
 
         # Bottom input area
-        input_frame = ctk.CTkFrame(parent, fg_color=C["card"], corner_radius=12, height=56)
+        input_frame = ctk.CTkFrame(chat_area, fg_color=C["card"], corner_radius=12, height=56)
         input_frame.pack(fill="x")
         input_frame.pack_propagate(False)
 
@@ -462,7 +497,7 @@ class ChamberApp(ctk.CTk):
         self.sys_btn.pack(side="left", padx=(10, 4), pady=10)
 
         # System prompt frame (created now, shown/hidden on toggle)
-        self.system_frame = ctk.CTkFrame(parent, fg_color=C["card"], corner_radius=10)
+        self.system_frame = ctk.CTkFrame(chat_area, fg_color=C["card"], corner_radius=10)
         self.system_entry = ctk.CTkEntry(
             self.system_frame, height=34,
             placeholder_text="System prompt (opcional)...",
@@ -505,7 +540,7 @@ class ChamberApp(ctk.CTk):
         self._spinner_frame_idx = 0
         self._spinner_active = False
         self._chat_spinner_frame = ctk.CTkFrame(
-            parent, fg_color=C["card"], corner_radius=10, height=40
+            chat_area, fg_color=C["card"], corner_radius=10, height=40
         )
         self._chat_spinner_label = ctk.CTkLabel(
             self._chat_spinner_frame, text="",
@@ -546,6 +581,7 @@ class ChamberApp(ctk.CTk):
         self._persist_chat_state()
         self._chat_append_user(text)
         self._show_chat_spinner()
+        self._refresh_conv_list()
 
         # Build messages for API
         api_messages = []
@@ -564,9 +600,9 @@ class ChamberApp(ctk.CTk):
         def do_request():
             try:
                 result = self.roulette.chat_completion(api_messages)
-                if "error" in result and "choices" not in result:
-                    err = result["error"].get("message", "Error desconocido")
-                    self.after(0, lambda: self._chat_append_system(f"Error: {err}"))
+                if "choices" not in result or not result["choices"]:
+                    err = result.get("error", {}).get("message", "Respuesta inválida del proveedor")
+                    self.after(0, lambda e=err: self._chat_append_system(f"Error: {e}"))
                 else:
                     content = result["choices"][0]["message"]["content"]
                     model = result.get("model", "")
@@ -579,7 +615,7 @@ class ChamberApp(ctk.CTk):
                     self._persist_chat_state()
                     self.after(0, lambda c=content, t=tag: self._chat_append_assistant(c, t))
             except Exception as e:
-                self.after(0, lambda: self._chat_append_system(f"Error: {e}"))
+                self.after(0, lambda err=e: self._chat_append_system(f"Error: {err}"))
             finally:
                 self.after(0, self._hide_chat_spinner)
                 self.after(0, lambda: self.send_btn.configure(state="normal", text="Enviar"))
@@ -637,11 +673,132 @@ class ChamberApp(ctk.CTk):
         self.chat_display.delete("1.0", "end")
         self.chat_display.configure(state="disabled")
 
+    def _migrate_legacy_chat(self):
+        """Migrate old flat chat_history into conversations list."""
+        old = self.config_data.get("chat_history", [])
+        convs = self.config_data.get("conversations", [])
+        if old and not convs:
+            title = self._conv_title_from_messages(old)
+            convs.append({
+                "id": str(uuid.uuid4()),
+                "title": title,
+                "messages": list(old),
+                "created_at": datetime.datetime.now().isoformat(),
+            })
+            self.config_data["conversations"] = convs
+            self.config_data["chat_history"] = []
+            save_config(self.config_data)
+
+    def _conv_title_from_messages(self, messages):
+        for msg in messages:
+            if msg.get("role") == "user" and msg.get("content", "").strip():
+                text = msg["content"].strip()
+                return text[:40] + ("..." if len(text) > 40 else "")
+        return "Chat"
+
+    def _create_new_conversation(self, switch=True):
+        conv = {
+            "id": str(uuid.uuid4()),
+            "title": "Nuevo chat",
+            "messages": [],
+            "created_at": datetime.datetime.now().isoformat(),
+        }
+        self.conversations.insert(0, conv)
+        self._current_conv_id = conv["id"]
+        self._save_conversations()
+        if switch:
+            self._switch_conversation(conv["id"])
+        return conv["id"]
+
+    def _get_current_conv(self):
+        for c in self.conversations:
+            if c["id"] == self._current_conv_id:
+                return c
+        return self.conversations[0] if self.conversations else {"id": "", "title": "", "messages": [], "created_at": ""}
+
+    def _new_chat(self):
+        # Save current if it has messages
+        self._save_conversations()
+        cid = self._create_new_conversation(switch=True)
+        self._refresh_conv_list()
+
+    def _switch_conversation(self, conv_id):
+        self._current_conv_id = conv_id
+        conv = self._get_current_conv()
+        self.chat_messages = conv["messages"]
+        if hasattr(self, "chat_display"):
+            self._render_chat_history()
+        if hasattr(self, "_conv_list_frame"):
+            self._refresh_conv_list()
+
+    def _delete_conversation(self, conv_id):
+        self.conversations = [c for c in self.conversations if c["id"] != conv_id]
+        self._save_conversations()
+        if conv_id == self._current_conv_id:
+            if self.conversations:
+                self._switch_conversation(self.conversations[0]["id"])
+            else:
+                self._create_new_conversation(switch=True)
+        self._refresh_conv_list()
+
+    def _save_conversations(self):
+        # Update title of current conv based on first user message
+        conv = self._get_current_conv()
+        if conv and conv["messages"] and conv["title"] == "Nuevo chat":
+            conv["title"] = self._conv_title_from_messages(conv["messages"])
+        # Remove empty non-current conversations
+        self.conversations = [
+            c for c in self.conversations
+            if c["messages"] or c["id"] == self._current_conv_id
+        ]
+        # Keep max 50 conversations
+        self.config_data["conversations"] = self.conversations[:50]
+        save_config(self.config_data)
+
+    def _refresh_conv_list(self):
+        if not hasattr(self, "_conv_list_frame"):
+            return
+        for w in self._conv_list_frame.winfo_children():
+            w.destroy()
+
+        for conv in self.conversations:
+            is_active = conv["id"] == self._current_conv_id
+            msg_count = len([m for m in conv["messages"] if m.get("role") == "user"])
+
+            item_frame = ctk.CTkFrame(
+                self._conv_list_frame,
+                fg_color=C["card"] if is_active else "transparent",
+                corner_radius=8,
+            )
+            item_frame.pack(fill="x", pady=1)
+
+            btn = ctk.CTkButton(
+                item_frame,
+                text=conv["title"][:28],
+                anchor="w", height=32,
+                font=ctk.CTkFont(size=11, weight="bold" if is_active else "normal"),
+                fg_color="transparent", hover_color=C["card_hover"],
+                text_color=C["accent"] if is_active else C["text_dim"],
+                corner_radius=6,
+                command=lambda cid=conv["id"]: self._switch_conversation(cid),
+            )
+            btn.pack(side="left", fill="x", expand=True, padx=(4, 0))
+
+            if len(self.conversations) > 1:
+                del_btn = ctk.CTkButton(
+                    item_frame, text="×", width=24, height=24,
+                    font=ctk.CTkFont(size=13),
+                    fg_color="transparent", hover_color=C["red"],
+                    text_color=C["text_muted"], corner_radius=4,
+                    command=lambda cid=conv["id"]: self._delete_conversation(cid),
+                )
+                del_btn.pack(side="right", padx=(0, 4), pady=4)
+
     def _persist_chat_state(self):
-        self.config_data["chat_history"] = self.chat_messages[-100:]
+        self._save_conversations()
         if hasattr(self, "system_entry"):
             self.config_data["system_prompt"] = self.system_entry.get().strip()
-        save_config(self.config_data)
+            save_config(self.config_data)
 
     def _render_chat_history(self):
         self.chat_display.configure(state="normal")
@@ -1686,9 +1843,9 @@ class ChamberApp(ctk.CTk):
         def do_request():
             try:
                 result = self.roulette.chat_completion(payload_messages)
-                if "error" in result and "choices" not in result:
-                    err = result["error"].get("message", "Error desconocido")
-                    self.after(0, lambda: self._append_gadget_chat("Sistema", f"Error: {err}"))
+                if "choices" not in result or not result["choices"]:
+                    err = result.get("error", {}).get("message", "Respuesta inválida del proveedor")
+                    self.after(0, lambda e=err: self._append_gadget_chat("Sistema", f"Error: {e}"))
                 else:
                     content = result["choices"][0]["message"]["content"]
                     model = result.get("model", "")
@@ -1701,7 +1858,7 @@ class ChamberApp(ctk.CTk):
                     self._persist_chat_state()
                     self.after(0, lambda c=content: self._append_gadget_chat("AI", c))
             except Exception as e:
-                self.after(0, lambda: self._append_gadget_chat("Sistema", f"Error: {e}"))
+                self.after(0, lambda err=e: self._append_gadget_chat("Sistema", f"Error: {err}"))
             finally:
                 self.after(0, lambda: self._gadget_send_btn.configure(state="normal", text="Enviar"))
 
@@ -1835,7 +1992,7 @@ class ChamberApp(ctk.CTk):
             self.config_data["server_port"] = int(port)
         if hasattr(self, "system_entry"):
             self.config_data["system_prompt"] = self.system_entry.get().strip()
-        self.config_data["chat_history"] = self.chat_messages[-100:]
+        self._save_conversations()
 
         save_config(self.config_data)
         if self.roulette:

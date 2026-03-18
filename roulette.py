@@ -136,6 +136,18 @@ class Roulette:
             result = self._call_provider(provider_id, prov, messages, **kwargs)
 
             if result.get("_success"):
+                # Validate response has expected structure
+                if "choices" not in result or not result.get("choices"):
+                    self._log(f"⚠ {prov['name']}: respuesta sin 'choices', rotando")
+                    increment_stat(self.config, provider_id, "errors")
+                    error_msg = result.get("error", {}).get("message", "Respuesta inválida")
+                    increment_stat(self.config, provider_id, "last_error", error_msg)
+                    save_config(self.config)
+                    with self.lock:
+                        if not self._rotate(f"Respuesta inválida de {prov['name']}"):
+                            break
+                    continue
+
                 result.pop("_success", None)
                 result.pop("_status_code", None)
                 increment_stat(self.config, provider_id, "requests")
@@ -184,7 +196,7 @@ class Roulette:
     def _call_provider(self, provider_id: str, prov: dict, messages: list, **kwargs) -> dict:
         """Hace la llamada HTTP al proveedor."""
         api_key = get_api_key(self.config, provider_id)
-        model = kwargs.pop("model", None) or get_selected_model(self.config, provider_id)
+        model = kwargs.get("model") or get_selected_model(self.config, provider_id)
 
         # Cohere usa formato diferente
         if prov.get("custom_format") == "cohere":
@@ -202,9 +214,11 @@ class Roulette:
             "messages": messages,
         }
         # Pasar parámetros opcionales
-        for key in ("temperature", "max_tokens", "top_p", "stream"):
+        for key in ("temperature", "max_tokens", "top_p"):
             if key in kwargs and kwargs[key] is not None:
                 payload[key] = kwargs[key]
+        # Never pass stream=True to non-stream call
+        payload["stream"] = False
 
         self._log(f"→ {prov['name']} [{model}]")
 
@@ -216,6 +230,8 @@ class Roulette:
                 data = {"error": {"message": resp.text}}
             data["_status_code"] = resp.status_code
             data["_success"] = 200 <= resp.status_code < 300
+            if data["_success"] and "choices" not in data:
+                self._log(f"⚠ {prov['name']}: respuesta sin 'choices': {str(data)[:200]}")
             return data
         except http_requests.exceptions.Timeout:
             return {"_success": False, "_status_code": 408,
@@ -230,8 +246,7 @@ class Roulette:
     def _call_provider_stream(self, provider_id: str, prov: dict, messages: list, **kwargs) -> dict:
         """Hace la llamada HTTP con stream=True y retorna el response raw."""
         api_key = get_api_key(self.config, provider_id)
-        model = kwargs.pop("model", None) or get_selected_model(self.config, provider_id)
-        kwargs.pop("stream", None)
+        model = kwargs.get("model") or get_selected_model(self.config, provider_id)
 
         if prov.get("custom_format") == "cohere":
             return {"_success": False, "_status_code": 0,

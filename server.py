@@ -87,7 +87,7 @@ def chat_completions():
             }
         )
 
-    if "error" in result and "choices" not in result:
+    if "choices" not in result or not result.get("choices"):
         return jsonify(result), 502
 
     return jsonify(result)

@@ -26,7 +26,8 @@ DEFAULT_CONFIG = {
     "enabled": {},            # {provider_id: True/False}
     "selected_models": {},    # {provider_id: "model-name"}
     "stats": {},              # {provider_id: {"requests": N, "errors": N, "last_error": ""}}
-    "chat_history": [],       # [{"role": "user|assistant", "content": "...", "provider_tag": "..."}]
+    "conversations": [],       # [{"id": "uuid", "title": "...", "messages": [...], "created_at": "..."}]
+    "chat_history": [],        # legacy, migrated to conversations
     "system_prompt": "",
 }
 
