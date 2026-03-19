@@ -19,6 +19,7 @@ if _OLD_DIR.exists() and not CONFIG_DIR.exists():
 
 DEFAULT_CONFIG = {
     "server_port": 11411,
+    "server_host": "0.0.0.0",
     "language": "es",
     "stream_enabled": False,
     "providers_order": list(PROVIDERS.keys()),

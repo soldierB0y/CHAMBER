@@ -600,10 +600,10 @@ class ChamberApp(ctk.CTk):
             if msg.get("role") in ("user", "assistant")
         )
 
-        # Send in background thread
+        # Send in background thread (never stream in GUI — we need full text)
         def do_request():
             try:
-                result = self.roulette.chat_completion(api_messages)
+                result = self.roulette.chat_completion(api_messages, stream=False)
                 if "choices" not in result or not result["choices"]:
                     err = result.get("error", {}).get("message", "Respuesta inválida del proveedor")
                     self.after(0, lambda e=err: self._chat_append_system(f"Error: {e}"))
@@ -1846,7 +1846,7 @@ class ChamberApp(ctk.CTk):
 
         def do_request():
             try:
-                result = self.roulette.chat_completion(payload_messages)
+                result = self.roulette.chat_completion(payload_messages, stream=False)
                 if "choices" not in result or not result["choices"]:
                     err = result.get("error", {}).get("message", "Respuesta inválida del proveedor")
                     self.after(0, lambda e=err: self._append_gadget_chat("Sistema", f"Error: {e}"))
@@ -1897,8 +1897,9 @@ class ChamberApp(ctk.CTk):
             on_switch=self._on_provider_switch,
             on_log=self._append_log
         )
+        host = self.config_data.get("server_host", "0.0.0.0")
         self.api_server = APIServer(
-            self.roulette, port=port, on_log=self._append_log
+            self.roulette, port=port, host=host, on_log=self._append_log
         )
         self.api_server.start()
 

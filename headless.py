@@ -23,10 +23,12 @@ from server import APIServer
 def main():
     parser = argparse.ArgumentParser(description="Chamber - Servidor headless")
     parser.add_argument("--port", type=int, default=None, help="Puerto del servidor")
+    parser.add_argument("--host", type=str, default=None, help="Dirección de escucha (default: 0.0.0.0)")
     args = parser.parse_args()
 
     config = load_config()
     port = args.port or config.get("server_port", 11411)
+    host = args.host or config.get("server_host", "0.0.0.0")
 
     def log(msg):
         print(f"  {msg}")
@@ -52,12 +54,22 @@ def main():
         print(f"    • {PROVIDERS[pid]['name']}")
     print()
 
+    import socket
+    try:
+        _s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        _s.connect(("8.8.8.8", 80))
+        lan_ip = _s.getsockname()[0]
+        _s.close()
+    except Exception:
+        lan_ip = host
+
     roulette = Roulette(config, on_log=log)
-    server = APIServer(roulette, port=port, on_log=log)
+    server = APIServer(roulette, port=port, host=host, on_log=log)
     server.start()
 
-    print(f"  Servidor: http://localhost:{port}/v1")
-    print(f"  Health:   http://localhost:{port}/health")
+    print(f"  Servidor local:  http://localhost:{port}/v1")
+    print(f"  Red local:       http://{lan_ip}:{port}/v1")
+    print(f"  Health:          http://localhost:{port}/health")
     print(f"  Ctrl+C para detener\n")
 
     try:
