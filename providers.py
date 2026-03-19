@@ -276,18 +276,8 @@ def get_model_tier(provider_id: str, model_name: str) -> str:
 
 
 def get_equivalent_model(target_provider: str, tier: str) -> str:
-    """Retorna el modelo equivalente en el proveedor destino para el tier dado."""
-    model = MODEL_TIERS.get(tier, {}).get(target_provider)
-    if model:
-        return model
-    # Fallback: buscar en tiers adyacentes
-    fallback = {"large": ["medium", "small"], "medium": ["large", "small"], "small": ["medium", "large"]}
-    for fb_tier in fallback.get(tier, []):
-        model = MODEL_TIERS.get(fb_tier, {}).get(target_provider)
-        if model:
-            return model
-    # Último recurso: modelo default del proveedor
-    return PROVIDERS[target_provider]["default_model"]
+    """Retorna el modelo equivalente exacto para el tier dado, o cadena vacía."""
+    return MODEL_TIERS.get(tier, {}).get(target_provider, "")
 
 
 # Errores que indican que se agotaron los tokens/cuota

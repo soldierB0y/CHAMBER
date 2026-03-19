@@ -64,6 +64,8 @@ class Roulette:
         body_lower = body.lower()
         return any(err in body_lower for err in EXHAUSTION_ERRORS)
 
+    _TIER_DOWNGRADE = {"large": ["medium", "small"], "medium": ["small"], "small": []}
+
     def _rotate(self, reason: str):
         """Rota al siguiente proveedor disponible, manteniendo el nivel del modelo."""
         old_id = self.active_providers[self.current_index % len(self.active_providers)]
@@ -72,33 +74,69 @@ class Roulette:
 
         # Detectar tier del modelo actual si aún no hay uno fijado
         if not self._current_tier:
-            # Primero usar el tier global configurado por el usuario
             cfg_tier = get_global_tier(self.config)
             if cfg_tier and cfg_tier != "auto":
                 self._current_tier = cfg_tier
             else:
-                # Auto-detectar desde el modelo seleccionado
                 current_model = get_selected_model(self.config, old_id)
                 tier = get_model_tier(old_id, current_model)
                 if tier:
                     self._current_tier = tier
 
-        # Buscar siguiente no agotado
-        for _ in range(len(self.active_providers)):
-            self.current_index = (self.current_index + 1) % len(self.active_providers)
-            next_id = self.active_providers[self.current_index]
-            if next_id not in self._exhausted:
-                if self._current_tier:
-                    eq = get_equivalent_model(next_id, self._current_tier)
-                    self._log(f"🔄 Rotando a: {PROVIDERS[next_id]['name']} [{eq}] (tier: {self._current_tier})")
-                else:
-                    self._log(f"🔄 Rotando a: {PROVIDERS[next_id]['name']}")
+        if self._current_tier:
+            # Buscar siguiente proveedor al MISMO tier
+            next_id = self._find_next_at_tier(self._current_tier)
+            if next_id:
+                eq = get_equivalent_model(next_id, self._current_tier)
+                self._log(f"🔄 Rotando a: {PROVIDERS[next_id]['name']} [{eq}] (tier: {self._current_tier})")
+                if self.on_switch:
+                    self.on_switch(next_id, reason)
+                return True
+
+            # Todos agotados en este tier — intentar bajar de nivel
+            for lower_tier in self._TIER_DOWNGRADE.get(self._current_tier, []):
+                next_id = self._find_next_at_tier(lower_tier)
+                if next_id:
+                    eq = get_equivalent_model(next_id, lower_tier)
+                    self._log(f"⚠ Todos los proveedores agotados en tier '{self._current_tier}'")
+                    self._log(f"⬇ Bajando a tier '{lower_tier}': {PROVIDERS[next_id]['name']} [{eq}]")
+                    self._current_tier = lower_tier
+                    if self.on_switch:
+                        self.on_switch(next_id, reason)
+                    return True
+        else:
+            # Sin tier — buscar siguiente disponible
+            next_id = self._find_next_available()
+            if next_id:
+                self._log(f"🔄 Rotando a: {PROVIDERS[next_id]['name']}")
                 if self.on_switch:
                     self.on_switch(next_id, reason)
                 return True
 
         self._log("❌ Todos los proveedores agotados")
         return False
+
+    def _find_next_at_tier(self, tier: str):
+        """Busca el siguiente proveedor no-agotado que tenga modelo en el tier exacto."""
+        start = self.current_index
+        for i in range(len(self.active_providers)):
+            idx = (start + 1 + i) % len(self.active_providers)
+            pid = self.active_providers[idx]
+            if pid not in self._exhausted and get_equivalent_model(pid, tier):
+                self.current_index = idx
+                return pid
+        return None
+
+    def _find_next_available(self):
+        """Busca el siguiente proveedor no-agotado (sin restricción de tier)."""
+        start = self.current_index
+        for i in range(len(self.active_providers)):
+            idx = (start + 1 + i) % len(self.active_providers)
+            pid = self.active_providers[idx]
+            if pid not in self._exhausted:
+                self.current_index = idx
+                return pid
+        return None
 
     def reset_exhausted(self):
         with self.lock:
@@ -218,11 +256,20 @@ class Roulette:
         }
 
     def _resolve_model(self, provider_id: str, **kwargs) -> str:
-        """Resuelve qué modelo usar: explícito > tier de rotación > seleccionado."""
+        """Resuelve qué modelo usar: explícito > tier de rotación > tier global > seleccionado."""
         if kwargs.get("model"):
             return kwargs["model"]
-        if self._current_tier:
-            return get_equivalent_model(provider_id, self._current_tier)
+        # Tier activo durante rotación
+        tier = self._current_tier
+        # Si no hay tier de rotación, usar el global del usuario
+        if not tier:
+            cfg_tier = get_global_tier(self.config)
+            if cfg_tier and cfg_tier != "auto":
+                tier = cfg_tier
+        if tier:
+            model = get_equivalent_model(provider_id, tier)
+            if model:
+                return model
         return get_selected_model(self.config, provider_id)
 
     def _call_provider(self, provider_id: str, prov: dict, messages: list, **kwargs) -> dict:
