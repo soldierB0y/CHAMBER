@@ -16,7 +16,7 @@ try:
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
-from providers import PROVIDERS
+from providers import PROVIDERS, fetch_provider_info
 from config import (
     load_config, save_config,
     get_api_key, set_api_key,
@@ -80,6 +80,10 @@ I18N = {
         "settings_stream_desc": "Permitir respuestas en streaming (SSE). Desactívalo si el cliente no muestra las respuestas.",
         "settings_stream_on": "Activado",
         "settings_stream_off": "Desactivado",
+        "settings_lan": "RED LOCAL",
+        "settings_lan_desc": "Permitir acceso desde otros dispositivos en la red local (LAN). Si se desactiva, solo se podrá acceder desde este equipo.",
+        "settings_lan_on": "Activado",
+        "settings_lan_off": "Desactivado",
         "info_quick_setup": "Configuración rápida",
         "info_quick_1": "1.  Haz clic en el nombre de cada proveedor para registrarte",
         "info_quick_2": "2.  Pega tu API Key y activa el switch",
@@ -128,6 +132,10 @@ I18N = {
         "settings_stream_desc": "Allow streaming responses (SSE). Disable if the client doesn't display responses.",
         "settings_stream_on": "Enabled",
         "settings_stream_off": "Disabled",
+        "settings_lan": "LOCAL NETWORK",
+        "settings_lan_desc": "Allow access from other devices on the local network (LAN). If disabled, only this computer can connect.",
+        "settings_lan_on": "Enabled",
+        "settings_lan_off": "Disabled",
         "info_quick_setup": "Quick Setup",
         "info_quick_1": "1.  Click on each provider name to sign up",
         "info_quick_2": "2.  Paste your API Key and toggle the switch",
@@ -1048,6 +1056,18 @@ class ChamberApp(ctk.CTk):
         sync_btn.pack(side="left", padx=(4, 0))
         widgets["sync_btn"] = sync_btn
 
+        # Info button (query API for credits/limits)
+        info_btn = ctk.CTkButton(
+            key_row, text="ℹ", width=34, height=34,
+            font=ctk.CTkFont(size=14),
+            fg_color=C["input_bg"], hover_color=C["card_hover"],
+            border_width=1, border_color=C["border"],
+            text_color=C["accent"], corner_radius=8,
+            command=lambda p=pid: self._query_provider_info(p)
+        )
+        info_btn.pack(side="left", padx=(4, 0))
+        widgets["info_btn"] = info_btn
+
         # Model selector
         model_frame = ctk.CTkFrame(row3, fg_color="transparent", width=260)
         model_frame.pack(side="right")
@@ -1074,6 +1094,21 @@ class ChamberApp(ctk.CTk):
         model_menu.pack(fill="x")
         widgets["model_var"] = model_var
         widgets["model_menu"] = model_menu
+
+        # ── Info panel (hidden by default) ──
+        info_panel = ctk.CTkFrame(card, fg_color=C["surface"], corner_radius=8)
+        # Not packed initially — shown on ℹ click
+        info_label = ctk.CTkLabel(
+            info_panel, text="",
+            font=ctk.CTkFont(size=11, family="Consolas"),
+            text_color=C["text_dim"], anchor="w", justify="left",
+            wraplength=700
+        )
+        info_label.pack(fill="x", padx=12, pady=8)
+        widgets["info_panel"] = info_panel
+        widgets["info_label"] = info_label
+        widgets["info_visible"] = False
+        widgets["card"] = card
 
         self.provider_widgets[pid] = widgets
 
@@ -1231,6 +1266,44 @@ class ChamberApp(ctk.CTk):
         )
         self.stream_switch.pack(side="left")
 
+        lan_card = ctk.CTkFrame(
+            scroll, fg_color=C["card"], corner_radius=12,
+            border_width=1, border_color=C["border"]
+        )
+        lan_card.pack(fill="x", pady=6)
+
+        self.settings_lan_title = ctk.CTkLabel(
+            lan_card, text=self._t("settings_lan"),
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=C["text_muted"], anchor="w"
+        )
+        self.settings_lan_title.pack(fill="x", padx=18, pady=(14, 2))
+
+        self.settings_lan_desc = ctk.CTkLabel(
+            lan_card, text=self._t("settings_lan_desc"),
+            font=ctk.CTkFont(size=11),
+            text_color=C["text_dim"], anchor="w", wraplength=500
+        )
+        self.settings_lan_desc.pack(fill="x", padx=18, pady=(0, 8))
+
+        lan_row = ctk.CTkFrame(lan_card, fg_color="transparent")
+        lan_row.pack(fill="x", padx=18, pady=(0, 14))
+
+        lan_enabled = self.config_data.get("server_host", "0.0.0.0") == "0.0.0.0"
+        self.lan_var = ctk.BooleanVar(value=lan_enabled)
+        self.lan_switch = ctk.CTkSwitch(
+            lan_row, text=self._t("settings_lan_on") if lan_enabled else self._t("settings_lan_off"),
+            variable=self.lan_var,
+            font=ctk.CTkFont(size=12),
+            text_color=C["text"],
+            fg_color=C["border"],
+            progress_color=C["green"],
+            button_color=C["text"],
+            button_hover_color=C["accent"],
+            command=self._on_lan_change
+        )
+        self.lan_switch.pack(side="left")
+
         actions_card = ctk.CTkFrame(
             scroll, fg_color=C["card"], corner_radius=12,
             border_width=1, border_color=C["border"]
@@ -1283,6 +1356,13 @@ class ChamberApp(ctk.CTk):
         save_config(self.config_data)
         label = self._t("settings_stream_on") if enabled else self._t("settings_stream_off")
         self.stream_switch.configure(text=label)
+
+    def _on_lan_change(self):
+        enabled = self.lan_var.get()
+        self.config_data["server_host"] = "0.0.0.0" if enabled else "127.0.0.1"
+        save_config(self.config_data)
+        label = self._t("settings_lan_on") if enabled else self._t("settings_lan_off")
+        self.lan_switch.configure(text=label)
 
     def _on_port_change(self, event=None):
         raw = self.port_entry.get().strip()
@@ -1338,6 +1418,14 @@ class ChamberApp(ctk.CTk):
         if hasattr(self, "stream_switch"):
             enabled = self.stream_var.get()
             self.stream_switch.configure(text=self._t("settings_stream_on") if enabled else self._t("settings_stream_off"))
+
+        if hasattr(self, "settings_lan_title"):
+            self.settings_lan_title.configure(text=self._t("settings_lan"))
+        if hasattr(self, "settings_lan_desc"):
+            self.settings_lan_desc.configure(text=self._t("settings_lan_desc"))
+        if hasattr(self, "lan_switch"):
+            lan_on = self.lan_var.get()
+            self.lan_switch.configure(text=self._t("settings_lan_on") if lan_on else self._t("settings_lan_off"))
 
         if hasattr(self, "status_label"):
             self._update_status()
@@ -2087,6 +2175,46 @@ class ChamberApp(ctk.CTk):
         save_config(self.config_data)
         self._update_status()
         self._append_log("Estadísticas reseteadas")
+
+    def _query_provider_info(self, provider_id):
+        """Consulta la API del proveedor para mostrar créditos, tokens y rate limits."""
+        widgets = self.provider_widgets.get(provider_id)
+        if not widgets:
+            return
+
+        api_key = widgets["key_entry"].get().strip()
+        if not api_key:
+            self._append_log(f"⚠ {PROVIDERS[provider_id]['name']}: ingresa una API Key primero")
+            return
+
+        info_panel = widgets["info_panel"]
+        info_label = widgets["info_label"]
+        info_btn = widgets["info_btn"]
+
+        # Toggle: si ya está visible, ocultar
+        if widgets["info_visible"]:
+            info_panel.pack_forget()
+            widgets["info_visible"] = False
+            return
+
+        # Show loading
+        info_label.configure(text="⏳ Consultando API...")
+        info_panel.pack(fill="x", padx=16, pady=(0, 8))
+        widgets["info_visible"] = True
+        info_btn.configure(state="disabled", text="…")
+
+        def do_fetch():
+            results = fetch_provider_info(provider_id, api_key)
+            text = "\n".join(results)
+
+            def update_ui():
+                if self._closing:
+                    return
+                info_label.configure(text=text)
+                info_btn.configure(state="normal", text="ℹ")
+            self.after(0, update_ui)
+
+        threading.Thread(target=do_fetch, daemon=True).start()
 
     def _sync_models(self, provider_id):
         """Fetch real models from the provider API and update the dropdown."""

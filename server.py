@@ -54,23 +54,38 @@ def welcome():
 <title>Chamber API</title>
 <style>
   *{{box-sizing:border-box;margin:0;padding:0}}
-  body{{background:#0a0a0f;color:#e2e8f0;font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:2rem}}
-  .card{{background:#13131a;border:1px solid #1e1e2e;border-radius:16px;padding:3rem 2.5rem;max-width:600px;width:100%;box-shadow:0 25px 60px rgba(0,0,0,.5)}}
-  .logo{{font-size:2.8rem;font-weight:800;letter-spacing:.08em;background:linear-gradient(135deg,#a78bfa,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:.25rem}}
-  .tagline{{color:#6b7280;font-size:.95rem;margin-bottom:2rem}}
-  .status-row{{display:flex;align-items:center;gap:.6rem;margin-bottom:2rem}}
-  .dot{{width:10px;height:10px;border-radius:50%;background:{status_color};box-shadow:0 0 8px {status_color}}}
+  body{{background:#0a0a0f;color:#e2e8f0;font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:1rem}}
+  .card{{background:#13131a;border:1px solid #1e1e2e;border-radius:16px;padding:2rem 1.5rem;max-width:600px;width:100%;box-shadow:0 25px 60px rgba(0,0,0,.5)}}
+  .logo{{font-size:clamp(1.8rem,6vw,2.8rem);font-weight:800;letter-spacing:.08em;background:linear-gradient(135deg,#a78bfa,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:.25rem}}
+  .tagline{{color:#6b7280;font-size:clamp(.8rem,2.5vw,.95rem);margin-bottom:1.5rem}}
+  .status-row{{display:flex;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:1.5rem}}
+  .dot{{width:10px;height:10px;border-radius:50%;background:{status_color};box-shadow:0 0 8px {status_color};flex-shrink:0}}
   .status-text{{font-size:.9rem;color:#9ca3af}}
   .providers-count{{margin-left:auto;font-size:.85rem;color:#6b7280}}{'' if not provider_html else ''}
-  .pill{{display:inline-block;background:#1e1e2e;border:1px solid #2d2d44;border-radius:999px;padding:.35rem 1rem;font-size:.85rem;color:#a78bfa;margin-bottom:2rem}}
-  .section-title{{font-size:.75rem;text-transform:uppercase;letter-spacing:.1em;color:#4b5563;margin-bottom:1rem}}
-  .endpoint-list{{display:flex;flex-direction:column;gap:.6rem;margin-bottom:2rem}}
-  .endpoint{{background:#0a0a0f;border:1px solid #1e1e2e;border-radius:8px;padding:.7rem 1rem;display:flex;align-items:center;gap:.75rem;font-family:'Courier New',monospace;font-size:.85rem}}
-  .method{{font-size:.7rem;font-weight:700;padding:.2rem .5rem;border-radius:4px;min-width:42px;text-align:center}}
+  .pill{{display:inline-block;background:#1e1e2e;border:1px solid #2d2d44;border-radius:999px;padding:.35rem 1rem;font-size:.82rem;color:#a78bfa;margin-bottom:1.5rem;word-break:break-word}}
+  .section-title{{font-size:.75rem;text-transform:uppercase;letter-spacing:.1em;color:#4b5563;margin-bottom:.8rem}}
+  .endpoint-list{{display:flex;flex-direction:column;gap:.5rem;margin-bottom:1.5rem}}
+  .endpoint{{background:#0a0a0f;border:1px solid #1e1e2e;border-radius:8px;padding:.6rem .8rem;display:flex;align-items:center;flex-wrap:wrap;gap:.5rem;font-family:'Courier New',monospace;font-size:clamp(.72rem,2vw,.85rem)}}
+  .method{{font-size:.7rem;font-weight:700;padding:.2rem .5rem;border-radius:4px;min-width:42px;text-align:center;flex-shrink:0}}
   .get{{background:#064e3b;color:#6ee7b7}}.post{{background:#1e3a5f;color:#93c5fd}}
-  .ep-path{{color:#e2e8f0}}.ep-desc{{margin-left:auto;color:#6b7280;font-size:.78rem;font-family:'Segoe UI',sans-serif}}
-  .code-block{{background:#0a0a0f;border:1px solid #1e1e2e;border-radius:8px;padding:1rem 1.2rem;font-family:'Courier New',monospace;font-size:.8rem;color:#86efac;line-height:1.7;margin-bottom:.5rem;overflow-x:auto;white-space:pre}}
-  .footer{{text-align:center;color:#374151;font-size:.78rem;margin-top:2rem;padding-top:1.5rem;border-top:1px solid #1e1e2e}}
+  .ep-path{{color:#e2e8f0;word-break:break-all}}
+  .ep-desc{{margin-left:auto;color:#6b7280;font-size:clamp(.7rem,1.8vw,.78rem);font-family:'Segoe UI',sans-serif;white-space:nowrap}}
+  .code-block{{background:#0a0a0f;border:1px solid #1e1e2e;border-radius:8px;padding:.8rem 1rem;font-family:'Courier New',monospace;font-size:clamp(.68rem,1.8vw,.8rem);color:#86efac;line-height:1.7;margin-bottom:.5rem;overflow-x:auto;white-space:pre;-webkit-overflow-scrolling:touch}}
+  .footer{{text-align:center;color:#374151;font-size:.78rem;margin-top:1.5rem;padding-top:1.2rem;border-top:1px solid #1e1e2e}}
+  .chatbot-btn{{display:inline-block;background:linear-gradient(135deg,#a78bfa,#60a5fa);color:#0a0a0f;font-weight:700;padding:.65rem 2rem;border-radius:999px;text-decoration:none;font-size:clamp(.85rem,2.5vw,.95rem);letter-spacing:.03em;transition:opacity .2s}}
+  .chatbot-btn:hover{{opacity:.85}}
+  @media(max-width:480px){{
+    body{{padding:.5rem;align-items:flex-start}}
+    .card{{border-radius:12px;padding:1.4rem 1rem}}
+    .status-row{{flex-direction:column;align-items:flex-start;gap:.4rem}}
+    .providers-count{{margin-left:0}}
+    .endpoint{{gap:.4rem}}
+    .ep-desc{{margin-left:0;width:100%;padding-left:calc(42px + .5rem)}}
+  }}
+  @media(min-width:481px) and (max-width:768px){{
+    body{{padding:1rem}}
+    .card{{padding:2rem 1.5rem}}
+  }}
 </style>
 </head>
 <body>
@@ -87,6 +102,7 @@ def welcome():
   <div class="endpoint-list">
     <div class="endpoint"><span class="method get">GET</span><span class="ep-path">/v1/models</span><span class="ep-desc">Lista de modelos</span></div>
     <div class="endpoint"><span class="method post">POST</span><span class="ep-path">/v1/chat/completions</span><span class="ep-desc">Chat</span></div>
+    <div class="endpoint"><span class="method get">GET</span><span class="ep-path">/chat</span><span class="ep-desc">Chatbot Web</span></div>
     <div class="endpoint"><span class="method get">GET</span><span class="ep-path">/health</span><span class="ep-desc">Estado del servidor</span></div>
   </div>
   <div class="section-title">Ejemplo rápido</div>
@@ -100,11 +116,215 @@ r = client.chat.completions.create(
     messages=[{{"role":"user","content":"Hola!"}}]
 )
 print(r.choices[0].message.content)</div>
+  <div style="text-align:center;margin:1.5rem 0 .5rem"><a href="/chat" class="chatbot-btn">Abrir Chatbot</a></div>
   <div class="footer">Chamber &mdash; github.com/soldierB0y/CHAMBER</div>
 </div>
 </body>
 </html>"""
     return Response(html, mimetype="text/html")
+
+
+@app.route("/chat", methods=["GET"])
+def chatbot_ui():
+    """Chatbot web accesible desde la red local."""
+    chat_html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Chamber Chat</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+html,body{{height:100%;overflow:hidden}}
+body{{background:#0a0a0f;color:#e2e8f0;font-family:'Segoe UI',system-ui,sans-serif;display:flex;flex-direction:column;height:100vh;height:100dvh}}
+.header{{background:#13131a;border-bottom:1px solid #1e1e2e;padding:.6rem .8rem;display:flex;align-items:center;flex-wrap:wrap;gap:.4rem .8rem;flex-shrink:0}}
+.header .logo{{font-size:clamp(1.1rem,3.5vw,1.4rem);font-weight:800;letter-spacing:.06em;background:linear-gradient(135deg,#a78bfa,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}}
+.header .subtitle{{color:#6b7280;font-size:.85rem}}
+.header-right{{display:flex;align-items:center;gap:.5rem;margin-left:auto}}
+.model-label{{font-size:.8rem;color:#6b7280;display:flex;align-items:center;gap:.3rem}}
+#model-sel{{background:#1e1e2e;color:#e2e8f0;border:1px solid #2d2d44;border-radius:6px;padding:.35rem .5rem;font-size:.8rem;max-width:180px;-webkit-appearance:none}}
+.header .status{{display:flex;align-items:center;gap:.4rem;font-size:.8rem;color:#9ca3af}}
+.header .dot{{width:8px;height:8px;border-radius:50%;background:#22c55e;box-shadow:0 0 6px #22c55e;flex-shrink:0}}
+.messages{{flex:1;overflow-y:auto;padding:.8rem .8rem 0;display:flex;flex-direction:column;gap:.6rem;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}}
+.msg{{max-width:80%;padding:.7rem .9rem;border-radius:12px;line-height:1.55;font-size:clamp(.85rem,2.5vw,.92rem);word-wrap:break-word;overflow-wrap:break-word;white-space:pre-wrap}}
+.msg.user{{align-self:flex-end;background:#2d2d6b;border-bottom-right-radius:4px}}
+.msg.assistant{{align-self:flex-start;background:#1e2233;border:1px solid #2d3348;border-bottom-left-radius:4px}}
+.msg.assistant .thinking{{color:#6b7280;font-style:italic;font-size:.8rem}}
+.msg.error{{align-self:center;background:#3b1111;border:1px solid #ef4444;color:#fca5a5;font-size:.85rem;text-align:center;max-width:95%}}
+.input-area{{background:#13131a;border-top:1px solid #1e1e2e;padding:.6rem .8rem;display:flex;gap:.5rem;flex-shrink:0;padding-bottom:calc(.6rem + env(safe-area-inset-bottom,0px))}}
+#msg-input{{flex:1;background:#1e1e2e;color:#e2e8f0;border:1px solid #2d2d44;border-radius:10px;padding:.65rem .9rem;font-size:16px;font-family:inherit;resize:none;outline:none;min-height:44px;max-height:120px;transition:border-color .2s;-webkit-appearance:none}}
+#msg-input:focus{{border-color:#6c63ff}}
+#send-btn{{background:linear-gradient(135deg,#a78bfa,#60a5fa);color:#0a0a0f;border:none;border-radius:10px;width:48px;min-width:48px;height:44px;font-size:1.1rem;font-weight:700;cursor:pointer;transition:opacity .2s;flex-shrink:0;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent}}
+#send-btn:hover{{opacity:.85}}
+#send-btn:disabled{{opacity:.4;cursor:not-allowed}}
+.typing-indicator{{align-self:flex-start;padding:.5rem 1rem;color:#6b7280;font-size:.8rem}}
+.typing-indicator span{{animation:blink 1.4s infinite both}}
+.typing-indicator span:nth-child(2){{animation-delay:.2s}}
+.typing-indicator span:nth-child(3){{animation-delay:.4s}}
+@keyframes blink{{0%,80%,100%{{opacity:0}}40%{{opacity:1}}}}
+@media(max-width:480px){{
+  .header{{padding:.5rem .6rem}}
+  .header .subtitle{{display:none}}
+  .msg{{max-width:92%}}
+  #model-sel{{max-width:120px}}
+  .messages{{padding:.6rem .5rem 0}}
+  .input-area{{padding:.5rem}}
+}}
+@media(min-width:481px) and (max-width:768px){{
+  .msg{{max-width:85%}}
+  #model-sel{{max-width:150px}}
+}}
+</style>
+</head>
+<body>
+<div class="header">
+  <span class="logo">CHAMBER</span>
+  <span class="subtitle">Chat</span>
+  <div class="header-right">
+    <label class="model-label">Modelo:
+      <select id="model-sel"><option value="auto">auto</option></select>
+    </label>
+    <div class="status"><span class="dot"></span>Conectado</div>
+  </div>
+</div>
+<div class="messages" id="messages"></div>
+<div class="input-area">
+  <textarea id="msg-input" rows="1" placeholder="Escribe un mensaje…"></textarea>
+  <button id="send-btn">➤</button>
+</div>
+<script>
+const BASE = window.location.origin;
+const messagesEl = document.getElementById('messages');
+const input = document.getElementById('msg-input');
+const sendBtn = document.getElementById('send-btn');
+const modelSel = document.getElementById('model-sel');
+let conversation = [];
+let sending = false;
+
+// Auto-resize textarea
+input.addEventListener('input', () => {{
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 150) + 'px';
+}});
+
+// Load models
+fetch(BASE + '/v1/models').then(r => r.json()).then(data => {{
+  (data.data || []).forEach(m => {{
+    const opt = document.createElement('option');
+    opt.value = m.id;
+    opt.textContent = m.id;
+    modelSel.appendChild(opt);
+  }});
+}}).catch(() => {{}});
+
+function addMsg(role, content) {{
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.textContent = content;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div;
+}}
+
+function showTyping() {{
+  const div = document.createElement('div');
+  div.className = 'typing-indicator';
+  div.id = 'typing';
+  div.innerHTML = '<span>●</span><span>●</span><span>●</span>';
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}}
+
+function hideTyping() {{
+  const el = document.getElementById('typing');
+  if (el) el.remove();
+}}
+
+async function sendMessage() {{
+  const text = input.value.trim();
+  if (!text || sending) return;
+  sending = true;
+  sendBtn.disabled = true;
+  input.value = '';
+  input.style.height = 'auto';
+
+  addMsg('user', text);
+  conversation.push({{role: 'user', content: text}});
+  showTyping();
+
+  try {{
+    const resp = await fetch(BASE + '/v1/chat/completions', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{
+        model: modelSel.value,
+        messages: conversation,
+        stream: true
+      }})
+    }});
+
+    hideTyping();
+
+    if (!resp.ok) {{
+      const err = await resp.text();
+      addMsg('error', 'Error: ' + resp.status + ' — ' + err);
+      sending = false;
+      sendBtn.disabled = false;
+      return;
+    }}
+
+    const assistantDiv = addMsg('assistant', '');
+    let fullText = '';
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {{
+      const {{done, value}} = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, {{stream: true}});
+      const lines = buffer.split('\\n');
+      buffer = lines.pop();
+      for (const line of lines) {{
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data:')) continue;
+        const payload = trimmed.slice(5).trim();
+        if (payload === '[DONE]') continue;
+        try {{
+          const obj = JSON.parse(payload);
+          const delta = obj.choices?.[0]?.delta?.content;
+          if (delta) {{
+            fullText += delta;
+            assistantDiv.textContent = fullText;
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          }}
+        }} catch(e) {{}}
+      }}
+    }}
+    if (fullText) {{
+      conversation.push({{role: 'assistant', content: fullText}});
+    }}
+  }} catch(e) {{
+    hideTyping();
+    addMsg('error', 'Error de conexión: ' + e.message);
+  }}
+  sending = false;
+  sendBtn.disabled = false;
+  input.focus();
+}}
+
+sendBtn.addEventListener('click', sendMessage);
+input.addEventListener('keydown', (e) => {{
+  if (e.key === 'Enter' && !e.shiftKey) {{
+    e.preventDefault();
+    sendMessage();
+  }}
+}});
+input.focus();
+</script>
+</body>
+</html>"""
+    return Response(chat_html, mimetype="text/html")
 
 
 @app.route("/v1/chat/completions", methods=["POST"])

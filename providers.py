@@ -4,6 +4,8 @@ Cada proveedor tiene: nombre, base_url, modelos recomendados,
 formato de headers, y límites conocidos.
 """
 
+import requests as http_requests
+
 PROVIDERS = {
     "openrouter": {
         "name": "OpenRouter",
@@ -306,3 +308,165 @@ EXHAUSTION_ERRORS = [
 
 # HTTP status codes que indican agotamiento
 EXHAUSTION_STATUS_CODES = [429, 402, 403, 503]
+
+
+def _parse_rate_headers(headers: dict) -> list:
+    """Extrae info de rate-limit de headers HTTP estándar."""
+    info = []
+    mappings = {
+        "x-ratelimit-limit-requests": "Límite req",
+        "x-ratelimit-remaining-requests": "Req restantes",
+        "x-ratelimit-limit-tokens": "Límite tokens",
+        "x-ratelimit-remaining-tokens": "Tokens restantes",
+        "x-ratelimit-reset-requests": "Reset req",
+        "x-ratelimit-reset-tokens": "Reset tokens",
+        "x-ratelimit-limit": "Límite",
+        "x-ratelimit-remaining": "Restantes",
+        "x-ratelimit-reset": "Reset",
+        "retry-after": "Reintentar en",
+        "x-credits-remaining": "Créditos restantes",
+        "x-quota-remaining": "Cuota restante",
+    }
+    h_lower = {k.lower(): v for k, v in headers.items()}
+    for key, label in mappings.items():
+        val = h_lower.get(key)
+        if val is not None:
+            info.append(f"{label}: {val}")
+    return info
+
+
+def _fetch_openrouter(api_key: str) -> list:
+    """OpenRouter: GET /api/v1/auth/key para créditos y límites."""
+    info = []
+    try:
+        resp = http_requests.get(
+            "https://openrouter.ai/api/v1/auth/key",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10
+        )
+        if resp.status_code == 200:
+            data = resp.json().get("data", {})
+            label = data.get("label", "")
+            if label:
+                info.append(f"Key: {label}")
+            limit = data.get("limit")
+            if limit is not None:
+                info.append(f"Límite de créditos: ${limit}")
+            else:
+                info.append("Límite de créditos: Ilimitado")
+            usage = data.get("usage", 0)
+            info.append(f"Créditos usados: ${usage:.4f}")
+            if limit:
+                remaining = limit - usage
+                info.append(f"Créditos restantes: ${remaining:.4f}")
+            rate_limit = data.get("rate_limit", {})
+            if rate_limit:
+                reqs = rate_limit.get("requests", 0)
+                interval = rate_limit.get("interval", "")
+                info.append(f"Rate limit: {reqs} req/{interval}")
+        else:
+            info.append(f"Error consultando API: HTTP {resp.status_code}")
+    except Exception as e:
+        info.append(f"Error de conexión: {e}")
+    return info
+
+
+def _fetch_groq(api_key: str) -> list:
+    """Groq: hace GET /models y extrae headers de rate limit."""
+    info = []
+    try:
+        resp = http_requests.get(
+            "https://api.groq.com/openai/v1/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10
+        )
+        info.extend(_parse_rate_headers(dict(resp.headers)))
+        if resp.status_code == 200:
+            models = resp.json().get("data", [])
+            info.append(f"Modelos disponibles: {len(models)}")
+        else:
+            info.append(f"HTTP {resp.status_code}: {resp.text[:100]}")
+    except Exception as e:
+        info.append(f"Error: {e}")
+    return info
+
+
+def _fetch_cohere(api_key: str) -> list:
+    """Cohere: GET /v1/check-api-key y headers."""
+    info = []
+    try:
+        resp = http_requests.post(
+            "https://api.cohere.com/v1/check-api-key",
+            headers={"Authorization": f"Bearer {api_key}",
+                     "Content-Type": "application/json"},
+            timeout=10
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            valid = data.get("valid", False)
+            info.append(f"Key válida: {'Sí' if valid else 'No'}")
+            owner = data.get("owner_id", "")
+            if owner:
+                info.append(f"Owner: {owner}")
+            org = data.get("organization_id", "")
+            if org:
+                info.append(f"Organización: {org}")
+        info.extend(_parse_rate_headers(dict(resp.headers)))
+    except Exception as e:
+        info.append(f"Error: {e}")
+    return info
+
+
+def _fetch_generic(api_key: str, prov: dict) -> list:
+    """Consulta genérica: GET /models y extrae headers de rate limit."""
+    info = []
+    try:
+        url = f"{prov['base_url']}/models"
+        headers = {
+            prov["api_key_header"]: f"{prov['api_key_prefix']}{api_key}",
+            "Content-Type": "application/json",
+        }
+        headers.update(prov.get("extra_headers", {}))
+        resp = http_requests.get(url, headers=headers, timeout=10)
+        info.extend(_parse_rate_headers(dict(resp.headers)))
+        if resp.status_code == 200:
+            data = resp.json()
+            models = data.get("data", data.get("models", []))
+            if isinstance(models, list):
+                info.append(f"Modelos disponibles: {len(models)}")
+        elif resp.status_code == 401:
+            info.append("API Key inválida o expirada")
+        else:
+            info.append(f"HTTP {resp.status_code}")
+        if not info:
+            info.append("Sin información de cuota disponible desde esta API")
+    except Exception as e:
+        info.append(f"Error: {e}")
+    return info
+
+
+# Mapeo de fetchers especializados
+_PROVIDER_FETCHERS = {
+    "openrouter": lambda key, prov: _fetch_openrouter(key),
+    "groq": lambda key, prov: _fetch_groq(key),
+    "cohere": lambda key, prov: _fetch_cohere(key),
+}
+
+
+def fetch_provider_info(provider_id: str, api_key: str) -> list:
+    """
+    Consulta la API del proveedor y retorna una lista de strings con la información
+    disponible: créditos, tokens restantes, rate limits, resets, etc.
+    """
+    prov = PROVIDERS.get(provider_id)
+    if not prov:
+        return ["Proveedor no reconocido"]
+    if not api_key or not api_key.strip():
+        return ["No hay API Key configurada"]
+
+    fetcher = _PROVIDER_FETCHERS.get(provider_id, _fetch_generic)
+    info = fetcher(api_key.strip(), prov)
+
+    if not info:
+        info.append("No se obtuvo información adicional")
+    return info
