@@ -22,6 +22,7 @@ DEFAULT_CONFIG = {
     "server_host": "0.0.0.0",
     "language": "es",
     "stream_enabled": False,
+    "global_tier": "auto",     # "auto"/"large"/"medium"/"small"
     "providers_order": list(PROVIDERS.keys()),
     "api_keys": {},           # {provider_id: "sk-..."}
     "enabled": {},            # {provider_id: True/False}
@@ -78,6 +79,14 @@ def get_selected_model(config: dict, provider_id: str) -> str:
 
 def set_selected_model(config: dict, provider_id: str, model: str):
     config.setdefault("selected_models", {})[provider_id] = model
+
+
+def get_global_tier(config: dict) -> str:
+    return config.get("global_tier", "auto")
+
+
+def set_global_tier(config: dict, tier: str):
+    config["global_tier"] = tier
 
 
 STAT_DEFAULTS = {

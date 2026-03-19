@@ -13,7 +13,7 @@ from providers import (
 )
 from config import (
     get_api_key, is_enabled, get_selected_model,
-    increment_stat, save_config
+    get_global_tier, increment_stat, save_config
 )
 
 
@@ -72,10 +72,16 @@ class Roulette:
 
         # Detectar tier del modelo actual si aún no hay uno fijado
         if not self._current_tier:
-            current_model = get_selected_model(self.config, old_id)
-            tier = get_model_tier(old_id, current_model)
-            if tier:
-                self._current_tier = tier
+            # Primero usar el tier global configurado por el usuario
+            cfg_tier = get_global_tier(self.config)
+            if cfg_tier and cfg_tier != "auto":
+                self._current_tier = cfg_tier
+            else:
+                # Auto-detectar desde el modelo seleccionado
+                current_model = get_selected_model(self.config, old_id)
+                tier = get_model_tier(old_id, current_model)
+                if tier:
+                    self._current_tier = tier
 
         # Buscar siguiente no agotado
         for _ in range(len(self.active_providers)):

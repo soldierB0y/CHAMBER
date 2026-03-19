@@ -22,6 +22,7 @@ from config import (
     get_api_key, set_api_key,
     is_enabled, set_enabled,
     get_selected_model, set_selected_model,
+    get_global_tier, set_global_tier,
     get_stats, reset_stats, increment_stat,
 )
 from roulette import Roulette
@@ -336,6 +337,29 @@ class ChamberApp(ctk.CTk):
 
         # Spacer
         ctk.CTkFrame(sb, fg_color="transparent", height=8).pack(fill="x")
+
+        # Global tier selector
+        tier_sidebar = ctk.CTkFrame(sb, fg_color="transparent")
+        tier_sidebar.pack(fill="x", padx=16, pady=(0, 4))
+
+        ctk.CTkLabel(
+            tier_sidebar, text="NIVEL DE MODELO",
+            font=ctk.CTkFont(size=9), text_color=C["text_muted"], anchor="w"
+        ).pack(anchor="w")
+
+        tier_values = ["auto", "large", "medium", "small"]
+        self.global_tier_var = ctk.StringVar(value=get_global_tier(self.config_data))
+        self.global_tier_menu = ctk.CTkOptionMenu(
+            tier_sidebar, variable=self.global_tier_var, values=tier_values,
+            height=34, font=ctk.CTkFont(size=12, weight="bold"),
+            fg_color=C["input_bg"], button_color=C["border"],
+            button_hover_color=C["text_muted"],
+            dropdown_fg_color=C["surface"],
+            dropdown_hover_color=C["card"],
+            text_color=C["accent"],
+            corner_radius=8
+        )
+        self.global_tier_menu.pack(fill="x")
 
         # Action buttons
         self.start_btn = ctk.CTkButton(
@@ -825,6 +849,35 @@ class ChamberApp(ctk.CTk):
     # ── PROVIDERS TAB ─────────────────────────────────────────
 
     def _build_providers_tab(self, parent):
+        # Top bar with global tier selector
+        top_bar = ctk.CTkFrame(parent, fg_color="transparent", height=44)
+        top_bar.pack(fill="x", pady=(0, 6))
+        top_bar.pack_propagate(False)
+
+        ctk.CTkLabel(
+            top_bar, text="NIVEL DE MODELO",
+            font=ctk.CTkFont(size=10, weight="bold"), text_color=C["text_muted"]
+        ).pack(side="left", padx=(0, 8))
+
+        tier_values = ["auto", "large", "medium", "small"]
+        self.providers_tier_menu = ctk.CTkOptionMenu(
+            top_bar, variable=self.global_tier_var, values=tier_values,
+            height=32, width=120, font=ctk.CTkFont(size=12, weight="bold"),
+            fg_color=C["input_bg"], button_color=C["border"],
+            button_hover_color=C["text_muted"],
+            dropdown_fg_color=C["surface"],
+            dropdown_hover_color=C["card"],
+            text_color=C["accent"],
+            corner_radius=8
+        )
+        self.providers_tier_menu.pack(side="left")
+
+        ctk.CTkLabel(
+            top_bar,
+            text="  auto = detecta del modelo  ·  large / medium / small = fuerza nivel al rotar",
+            font=ctk.CTkFont(size=10), text_color=C["text_muted"]
+        ).pack(side="left", padx=(10, 0))
+
         self.provider_scroll = ctk.CTkScrollableFrame(
             parent, fg_color="transparent",
             scrollbar_button_color=C["border"],
@@ -2006,6 +2059,8 @@ class ChamberApp(ctk.CTk):
             set_api_key(self.config_data, pid, widgets["key_entry"].get().strip())
             set_enabled(self.config_data, pid, widgets["enabled_var"].get())
             set_selected_model(self.config_data, pid, widgets["model_var"].get())
+
+        set_global_tier(self.config_data, self.global_tier_var.get())
 
         port = self.port_entry.get().strip()
         if port.isdigit():
