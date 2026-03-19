@@ -174,6 +174,7 @@ class ChamberApp(ctk.CTk):
         self.log_lines = []
         self.gadget_window = None
         self.gadget_mode = False
+        self._closing = False
         self._last_stats_snapshot = None
 
         # Multi-conversation system
@@ -604,6 +605,8 @@ class ChamberApp(ctk.CTk):
         def do_request():
             try:
                 result = self.roulette.chat_completion(api_messages, stream=False)
+                if self._closing:
+                    return
                 if "choices" not in result or not result["choices"]:
                     err = result.get("error", {}).get("message", "Respuesta inválida del proveedor")
                     self.after(0, lambda e=err: self._chat_append_system(f"Error: {e}"))
@@ -619,10 +622,13 @@ class ChamberApp(ctk.CTk):
                     self._persist_chat_state()
                     self.after(0, lambda c=content, t=tag: self._chat_append_assistant(c, t))
             except Exception as e:
+                if self._closing:
+                    return
                 self.after(0, lambda err=e: self._chat_append_system(f"Error: {err}"))
             finally:
-                self.after(0, self._hide_chat_spinner)
-                self.after(0, lambda: self.send_btn.configure(state="normal", text="Enviar"))
+                if not self._closing:
+                    self.after(0, self._hide_chat_spinner)
+                    self.after(0, lambda: self.send_btn.configure(state="normal", text="Enviar"))
 
         threading.Thread(target=do_request, daemon=True).start()
 
@@ -663,7 +669,7 @@ class ChamberApp(ctk.CTk):
         self._chat_spinner_frame.pack_forget()
 
     def _animate_spinner(self):
-        if not self._spinner_active:
+        if not self._spinner_active or self._closing:
             return
         if getattr(self, "_spinner_frames", None):
             self._spinner_frame_idx = (self._spinner_frame_idx + 1) % len(self._spinner_frames)
@@ -1796,7 +1802,8 @@ class ChamberApp(ctk.CTk):
         self._gadget_errs.configure(text=f"✗ {total_err}")
         self._gadget_tokens.configure(text=f"◈ {self._fmt_tokens(total_tok)}")
 
-        self.gadget_window.after(2000, self._update_gadget)
+        if not self._closing:
+            self.gadget_window.after(2000, self._update_gadget)
 
     def _append_gadget_chat(self, speaker, text):
         """Append a chat line to the gadget chat box."""
@@ -1847,6 +1854,8 @@ class ChamberApp(ctk.CTk):
         def do_request():
             try:
                 result = self.roulette.chat_completion(payload_messages, stream=False)
+                if self._closing:
+                    return
                 if "choices" not in result or not result["choices"]:
                     err = result.get("error", {}).get("message", "Respuesta inválida del proveedor")
                     self.after(0, lambda e=err: self._append_gadget_chat("Sistema", f"Error: {e}"))
@@ -1862,9 +1871,12 @@ class ChamberApp(ctk.CTk):
                     self._persist_chat_state()
                     self.after(0, lambda c=content: self._append_gadget_chat("AI", c))
             except Exception as e:
+                if self._closing:
+                    return
                 self.after(0, lambda err=e: self._append_gadget_chat("Sistema", f"Error: {err}"))
             finally:
-                self.after(0, lambda: self._gadget_send_btn.configure(state="normal", text="Enviar"))
+                if not self._closing:
+                    self.after(0, lambda: self._gadget_send_btn.configure(state="normal", text="Enviar"))
 
         threading.Thread(target=do_request, daemon=True).start()
 
@@ -1979,12 +1991,15 @@ class ChamberApp(ctk.CTk):
             )
 
     def _update_status_loop(self):
+        if self._closing:
+            return
         self._update_status()
         if hasattr(self, "stats_summary_labels") and self.current_tab == "stats":
             self._refresh_stats_tab(auto=True)
         if self.gadget_window and self.gadget_window.winfo_exists():
             self._update_gadget()
-        self.after(2000, self._update_status_loop)
+        if not self._closing:
+            self.after(2000, self._update_status_loop)
 
     def _save_all(self, quiet=False):
         for pid, widgets in self.provider_widgets.items():
@@ -2071,27 +2086,43 @@ class ChamberApp(ctk.CTk):
                             self._append_log(
                                 f"✓ {prov['name']}: {len(model_ids)} modelos encontrados"
                             )
-                        self.after(0, update_ui)
+                        if not self._closing:
+                            self.after(0, update_ui)
                         return
 
-                self.after(0, lambda: (
-                    widgets["sync_btn"].configure(text="⟳", state="normal"),
-                    self._append_log(
-                        f"✗ {prov['name']}: HTTP {resp.status_code} al obtener modelos"
-                    )
-                ))
+                if not self._closing:
+                    self.after(0, lambda: (
+                        widgets["sync_btn"].configure(text="⟳", state="normal"),
+                        self._append_log(
+                            f"✗ {prov['name']}: HTTP {resp.status_code} al obtener modelos"
+                        )
+                    ))
             except Exception as e:
-                self.after(0, lambda: (
-                    widgets["sync_btn"].configure(text="⟳", state="normal"),
+                if not self._closing:
+                    self.after(0, lambda: (
+                        widgets["sync_btn"].configure(text="⟳", state="normal"),
                     self._append_log(f"✗ {prov['name']}: {e}")
                 ))
 
         threading.Thread(target=do_fetch, daemon=True).start()
 
     def on_closing(self):
-        self._save_all(quiet=True)
-        if self.gadget_window and self.gadget_window.winfo_exists():
-            self.gadget_window.destroy()
-        if self.api_server:
-            self.api_server.stop()
-        self.destroy()
+        self._closing = True
+        try:
+            self._save_all(quiet=True)
+        except Exception:
+            pass
+        try:
+            if self.gadget_window and self.gadget_window.winfo_exists():
+                self.gadget_window.destroy()
+        except Exception:
+            pass
+        try:
+            if self.api_server:
+                self.api_server.stop()
+        except Exception:
+            pass
+        try:
+            self.destroy()
+        except Exception:
+            pass

@@ -220,6 +220,74 @@ PROVIDERS = {
     },
 }
 
+# ── Tiers de modelos: agrupa modelos equivalentes entre proveedores ──
+MODEL_TIERS = {
+    "large": {
+        "openrouter": "meta-llama/llama-3.3-70b-instruct:free",
+        "groq": "llama-3.3-70b-versatile",
+        "cerebras": "llama-3.3-70b",
+        "cohere": "command-r-plus-08-2024",
+        "github_models": "gpt-4o",
+        "mistral": "mistral-medium-latest",
+        "google_ai": "gemini-2.5-flash",
+        "nvidia_nim": "meta/llama-3.1-70b-instruct",
+        "sambanova": "Meta-Llama-3.3-70B-Instruct",
+        "hyperbolic": "meta-llama/Llama-3.3-70B-Instruct",
+        "fireworks": "accounts/fireworks/models/llama-v3p3-70b-instruct",
+        "nebius": "meta-llama/Meta-Llama-3.1-70B-Instruct",
+    },
+    "medium": {
+        "openrouter": "google/gemma-3-27b-it:free",
+        "groq": "qwen-qwq-32b",
+        "cohere": "c4ai-aya-expanse-32b",
+        "github_models": "Mistral-small",
+        "mistral": "mistral-small-latest",
+        "google_ai": "gemma-3-27b-it",
+        "sambanova": "Qwen/Qwen3-32B",
+        "hyperbolic": "Qwen/Qwen2.5-72B-Instruct",
+        "fireworks": "accounts/fireworks/models/qwen2p5-72b-instruct",
+        "nebius": "Qwen/Qwen2.5-72B-Instruct",
+    },
+    "small": {
+        "openrouter": "google/gemma-3-12b-it:free",
+        "groq": "llama-3.1-8b-instant",
+        "cerebras": "llama3.1-8b",
+        "cohere": "command-r7b-12-2024",
+        "github_models": "gpt-4o-mini",
+        "mistral": "open-mistral-nemo",
+        "google_ai": "gemma-3-12b-it",
+        "nvidia_nim": "meta/llama-3.1-8b-instruct",
+        "sambanova": "Meta-Llama-3.1-8B-Instruct",
+        "hyperbolic": "meta-llama/Llama-3.1-8B-Instruct",
+        "fireworks": "accounts/fireworks/models/llama-v3p1-8b-instruct",
+        "nebius": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+    },
+}
+
+
+def get_model_tier(provider_id: str, model_name: str) -> str:
+    """Dado un proveedor y modelo, retorna su tier ('large', 'medium', 'small')."""
+    for tier, mapping in MODEL_TIERS.items():
+        if mapping.get(provider_id) == model_name:
+            return tier
+    return ""  # no tiene tier mapeado
+
+
+def get_equivalent_model(target_provider: str, tier: str) -> str:
+    """Retorna el modelo equivalente en el proveedor destino para el tier dado."""
+    model = MODEL_TIERS.get(tier, {}).get(target_provider)
+    if model:
+        return model
+    # Fallback: buscar en tiers adyacentes
+    fallback = {"large": ["medium", "small"], "medium": ["large", "small"], "small": ["medium", "large"]}
+    for fb_tier in fallback.get(tier, []):
+        model = MODEL_TIERS.get(fb_tier, {}).get(target_provider)
+        if model:
+            return model
+    # Último recurso: modelo default del proveedor
+    return PROVIDERS[target_provider]["default_model"]
+
+
 # Errores que indican que se agotaron los tokens/cuota
 EXHAUSTION_ERRORS = [
     "rate_limit",

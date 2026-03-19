@@ -7,7 +7,10 @@ import json
 import time
 import threading
 import requests as http_requests
-from providers import PROVIDERS, EXHAUSTION_ERRORS, EXHAUSTION_STATUS_CODES
+from providers import (
+    PROVIDERS, EXHAUSTION_ERRORS, EXHAUSTION_STATUS_CODES,
+    get_model_tier, get_equivalent_model,
+)
 from config import (
     get_api_key, is_enabled, get_selected_model,
     increment_stat, save_config
@@ -22,6 +25,7 @@ class Roulette:
         self.on_switch = on_switch  # callback(provider_id, reason)
         self.on_log = on_log        # callback(message)
         self._exhausted = set()     # proveedores agotados en esta sesión
+        self._current_tier = ""      # tier activo durante rotación
         self._build_active_list()
 
     def _build_active_list(self):
@@ -61,17 +65,28 @@ class Roulette:
         return any(err in body_lower for err in EXHAUSTION_ERRORS)
 
     def _rotate(self, reason: str):
-        """Rota al siguiente proveedor disponible."""
+        """Rota al siguiente proveedor disponible, manteniendo el nivel del modelo."""
         old_id = self.active_providers[self.current_index % len(self.active_providers)]
         self._exhausted.add(old_id)
         self._log(f"⚠ {PROVIDERS[old_id]['name']}: {reason}")
+
+        # Detectar tier del modelo actual si aún no hay uno fijado
+        if not self._current_tier:
+            current_model = get_selected_model(self.config, old_id)
+            tier = get_model_tier(old_id, current_model)
+            if tier:
+                self._current_tier = tier
 
         # Buscar siguiente no agotado
         for _ in range(len(self.active_providers)):
             self.current_index = (self.current_index + 1) % len(self.active_providers)
             next_id = self.active_providers[self.current_index]
             if next_id not in self._exhausted:
-                self._log(f"🔄 Rotando a: {PROVIDERS[next_id]['name']}")
+                if self._current_tier:
+                    eq = get_equivalent_model(next_id, self._current_tier)
+                    self._log(f"🔄 Rotando a: {PROVIDERS[next_id]['name']} [{eq}] (tier: {self._current_tier})")
+                else:
+                    self._log(f"🔄 Rotando a: {PROVIDERS[next_id]['name']}")
                 if self.on_switch:
                     self.on_switch(next_id, reason)
                 return True
@@ -101,6 +116,9 @@ class Roulette:
                     "type": "no_providers",
                 }
             }
+
+        # Reset tier al inicio de cada petición nueva
+        self._current_tier = ""
 
         max_attempts = len(self.active_providers)
         for attempt in range(max_attempts):
@@ -193,10 +211,18 @@ class Roulette:
             }
         }
 
+    def _resolve_model(self, provider_id: str, **kwargs) -> str:
+        """Resuelve qué modelo usar: explícito > tier de rotación > seleccionado."""
+        if kwargs.get("model"):
+            return kwargs["model"]
+        if self._current_tier:
+            return get_equivalent_model(provider_id, self._current_tier)
+        return get_selected_model(self.config, provider_id)
+
     def _call_provider(self, provider_id: str, prov: dict, messages: list, **kwargs) -> dict:
         """Hace la llamada HTTP al proveedor."""
         api_key = get_api_key(self.config, provider_id)
-        model = kwargs.get("model") or get_selected_model(self.config, provider_id)
+        model = self._resolve_model(provider_id, **kwargs)
 
         # Cohere usa formato diferente
         if prov.get("custom_format") == "cohere":
@@ -246,7 +272,7 @@ class Roulette:
     def _call_provider_stream(self, provider_id: str, prov: dict, messages: list, **kwargs) -> dict:
         """Hace la llamada HTTP con stream=True y retorna el response raw."""
         api_key = get_api_key(self.config, provider_id)
-        model = kwargs.get("model") or get_selected_model(self.config, provider_id)
+        model = self._resolve_model(provider_id, **kwargs)
 
         if prov.get("custom_format") == "cohere":
             return {"_success": False, "_status_code": 0,
