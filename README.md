@@ -1,139 +1,96 @@
-# 🔫 Chamber
+# 🔫 CHAMBER
 
-Aplicación de escritorio que maximiza el uso de tokens gratuitos de múltiples plataformas de LLM, rotando automáticamente entre ellas como las cámaras de un revólver.
+**Chamber** es una potente aplicación de escritorio diseñada para maximizar el uso de tokens gratuitos de múltiples proveedores de LLM, funcionando como un **Proxy Inteligente** que rota y procesa tus peticiones automáticamente.
 
-## Concepto
+## ✨ Características Principales
 
-Te registras una vez en todas las plataformas que ofrecen APIs gratuitas, pegas tus API keys en Chamber, y la aplicación expone **un único endpoint local compatible con OpenAI** (`http://localhost:11411/v1`). Cuando un proveedor se agota, rota automáticamente al siguiente.
+- **🔄 Rotación Automática (Revolver Mode)**: Cambia de proveedor instantáneamente si uno agota su cuota o falla.
+- **🚀 Enrutamiento Dinámico**: Chamber analiza tu mensaje y elige el mejor proveedor:
+    - **Contexto Grande**: Prioriza proveedores de **128k tokens** (Gemini, Mistral, Cohere) para archivos grandes.
+    - **Alta Velocidad**: Prioriza proveedores ultra-rápidos (Groq, Cerebras) para consultas breves.
+- **✂ Smart Crop (Manejo de Contexto)**: Si envías demasiado código, Chamber trunca inteligentemente la parte central para no romper los límites de las APIs gratuitas, manteniendo lo más crítico (cabecera y final).
+- **🛸 Modo Gadget**: Una ventana flotante minimalista con Chat y **Monitor de Logs en tiempo real**.
+- **📊 Estadísticas Detalladas**: Gráficos de consumo de tokens (Prompt/Completion) y conteo de errores por proveedor.
+- **🔗 Compatibilidad Total**: Expone un endpoint local (`http://localhost:11411/v1`) compatible con la API de OpenAI.
 
-## Proveedores soportados
+---
 
-### Gratuitos permanentes
-| Proveedor | Límites | Registro |
-|-----------|---------|----------|
-| **OpenRouter** | 50 req/día (modelos :free) | https://openrouter.ai/ |
-| **Groq** | 1,000-14,400 req/día | https://console.groq.com/ |
-| **Cerebras** | 14,400 req/día | https://cloud.cerebras.ai/ |
-| **Cohere** | 1,000 req/mes | https://cohere.com/ |
-| **GitHub Models** | Según tier Copilot | https://github.com/marketplace/models |
-| **Mistral AI** | 500K tokens/min | https://console.mistral.ai/ |
-| **Google AI Studio** | 15-500 req/día | https://aistudio.google.com/ |
-| **NVIDIA NIM** | 40 req/min | https://build.nvidia.com/ |
-
-### Con créditos de prueba
-| Proveedor | Créditos | Registro |
-|-----------|----------|----------|
-| **SambaNova** | $5 (3 meses) | https://cloud.sambanova.ai/ |
-| **Hyperbolic** | $1 | https://app.hyperbolic.ai/ |
-| **Fireworks** | $1 | https://fireworks.ai/ |
-| **Nebius** | $1 | https://tokenfactory.nebius.com/ |
-
-## Instalación
+## 🛠 Instalación
 
 ```bash
-# 1. Clonar o descargar el proyecto
-cd AIRoulette
+# 1. Clonar el repositorio
+git clone https://github.com/soldierB0y/CHAMBER.git
+cd CHAMBER
 
-# 2. Crear entorno virtual (recomendado)
+# 2. Crear entorno virtual
 python -m venv venv
 venv\Scripts\activate     # Windows
-# source venv/bin/activate  # Linux/Mac
+source venv/bin/activate  # Linux/Mac
 
 # 3. Instalar dependencias
 pip install -r requirements.txt
 
-# 4. Ejecutar
+# 4. Iniciar aplicación
 python main.py
 ```
 
-## Uso
+---
 
-### Paso 1: Configurar proveedores
-1. Abre la app → pestaña **🔑 Proveedores**
-2. Haz clic en el nombre de cada proveedor para ir a su página de registro
-3. Obtén tu API Key y pégala en el campo correspondiente
-4. Activa la casilla ✓ de cada proveedor que quieras usar
-5. Haz clic en **💾 Guardar Config**
+## 🔑 Proveedores Soportados
 
-### Paso 2: Iniciar servidor
-1. Haz clic en **▶ Iniciar Servidor**
-2. El servidor se inicia en `http://localhost:11411/v1`
+Chamber centraliza las mejores APIs gratuitas del mercado:
 
-### Paso 3: Usar la API
+| Proveedor | Ventana Contexto | Velocidad | Nota |
+|-----------|------------------|-----------|------|
+| **Google AI Studio** | 128K+ | Media | Ideal para archivos grandes (Gemini) |
+| **Groq** | 32K | **Ultra** | Inferencia instantánea LPU |
+| **Mistral AI** | 128K | Alta | Plan Experiment gratuito |
+| **Cerebras** | 8K | **Ultra** | Especializada en velocidad |
+| **OpenRouter** | Varía | Alta | Acceso a modelos *:free* |
+| **Cohere** | 128K | Media | Excelente para RAG y lógica |
+| **GitHub Models** | 8-128K | Alta | Requiere GitHub PAT |
+| **SambaNova** | 32K | **Ultra** | Velocidad de hardware dedicado |
 
-#### Con Python (librería openai)
-```python
-from openai import OpenAI
+---
 
-client = OpenAI(
-    base_url="http://localhost:11411/v1",
-    api_key="not-needed"
-)
+## 🚀 Cómo Usar
 
-response = client.chat.completions.create(
-    model="auto",
-    messages=[{"role": "user", "content": "¡Hola! ¿Cómo estás?"}]
-)
+### 1. Configuración
+- Ve a la pestaña **Proveedores**.
+- Haz clic en los enlaces para registrarte y obtener tus API Keys.
+- Pega las keys, activa los proveedores y presiona **▶ Iniciar Servidor**.
 
-print(response.choices[0].message.content)
-```
+### 2. Integración con Herramientas
+Configura tu cliente favorito (VS Code, Cursor, Continue) con estos datos:
+- **Base URL**: `http://localhost:11411/v1`
+- **API Key**: `cualquier_valor` (no se valida localmente)
+- **Modelo**: `auto` (Chamber decidirá el mejor) o `proveedor/modelo` (ej: `groq/llama-3.3-70b`).
 
-#### Con curl
+### 3. Modo Gadget
+Activa el **Modo Gadget** en Configuración para tener una pequeña ventana flotante sobre tus herramientas de desarrollo. Incluye una pestaña de **Logs** para ver qué está pasando "bajo el capó" (rotaciones, cuotas agotadas, etc.).
+
+---
+
+## 📂 Estructura del Proyecto
+
+- `main.py`: Punto de entrada del programa.
+- `gui.py`: Interfaz gráfica moderna (CustomTkinter) y Modo Gadget.
+- `server.py`: Servidor Flask que emula la API de OpenAI y realiza el Smart Crop.
+- `roulette.py`: Motor de rotación y lógica de enrutamiento dinámico.
+- `providers.py`: Definiciones, límites y metadatos de los proveedores.
+- `config.py`: Persistencia de configuraciones en JSON.
+
+---
+
+## 📦 Exportar a Ejecutable
+
+Si deseas generar un `.exe` para Windows:
 ```bash
-curl http://localhost:11411/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"auto","messages":[{"role":"user","content":"Hola!"}]}'
+pip install pyinstaller
+python build.py
 ```
+El ejecutable aparecerá en la carpeta `dist/`.
 
-#### Listar modelos disponibles
-```bash
-curl http://localhost:11411/v1/models
-```
+---
 
-#### Health check
-```bash
-curl http://localhost:11411/health
-```
-
-### Configuración en herramientas
-
-Puedes usar Chamber como backend en cualquier herramienta compatible con OpenAI:
-
-- **Continue (VS Code)**: Base URL = `http://localhost:11411/v1`
-- **Open WebUI**: Conexión OpenAI con URL `http://localhost:11411/v1`
-- **LangChain**: `ChatOpenAI(base_url="http://localhost:11411/v1", api_key="x")`
-- **Cualquier app OpenAI-compatible**: misma configuración
-
-## Cómo funciona la rotación
-
-```
-Petición → [Proveedor 1] → ✓ Respuesta
-                           ✗ Error 429/cuota
-           [Proveedor 2] → ✓ Respuesta
-                           ✗ Error 429/cuota
-           [Proveedor 3] → ✓ Respuesta
-           ...
-           [Último]       → ✗ "Todos agotados"
-```
-
-- Detecta automáticamente errores HTTP 429, 402, 403, 503
-- Detecta mensajes de error con palabras clave: "rate limit", "quota", "exceeded", etc.
-- Al agotar un proveedor, lo marca y pasa al siguiente
-- Botón **🔄 Reset Agotados** para reiniciar el ciclo
-
-## Archivos
-
-```
-Chamber/
-├── main.py          # Punto de entrada
-├── gui.py           # Interfaz gráfica (customtkinter)
-├── server.py        # Servidor API local (Flask)
-├── roulette.py      # Motor de rotación
-├── providers.py     # Definiciones de proveedores
-├── config.py        # Gestión de configuración
-├── logo.png         # Logo de la aplicación
-├── requirements.txt # Dependencias
-└── README.md        # Este archivo
-```
-
-La configuración se guarda en `~/.chamber/config.json`.
+**Chamber** — *Tu munición infinita de LLM gratuitos.* 🔫
