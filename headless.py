@@ -80,6 +80,8 @@ def main():
             input("  Presiona Enter para detener...\n")
         except KeyboardInterrupt:
             pass
+    except KeyboardInterrupt:
+        pass
 
     server.stop()
     print("\n  Servidor detenido.")

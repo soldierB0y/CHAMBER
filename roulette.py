@@ -2,6 +2,10 @@
 Motor de rotación tipo revólver (Chamber).
 Gestiona el ciclo entre proveedores y el reenvío de peticiones.
 """
+"""
+Motor de rotación tipo revólver (Chamber).
+Gestiona el ciclo entre proveedores y el reenvío de peticiones.
+"""
 
 import json
 import time
@@ -66,13 +70,21 @@ class Roulette:
 
     _TIER_DOWNGRADE = {"large": ["medium", "small"], "medium": ["small"], "small": []}
 
-    def _rotate(self, reason: str):
-        """Rota al siguiente proveedor disponible, manteniendo el nivel del modelo."""
+    def _rotate(self, reason: str, priority_type: str = None):
+        """Rota al siguiente proveedor disponible, manteniendo el nivel del modelo y respetando prioridades."""
         old_id = self.active_providers[self.current_index % len(self.active_providers)]
         self._exhausted.add(old_id)
         self._log(f"⚠ {PROVIDERS[old_id]['name']}: {reason}")
 
-        # Detectar tier del modelo actual si aún no hay uno fijado
+        # Intentar rotar respetando priority_type si existe
+        if priority_type:
+            next_id = self._find_next_available(priority_type=priority_type)
+            if next_id:
+                self._log(f"🔄 Rotando por prioridad '{priority_type}': {PROVIDERS[next_id]['name']}")
+                if self.on_switch:
+                    self.on_switch(next_id, reason)
+                return True
+
         if not self._current_tier:
             cfg_tier = get_global_tier(self.config)
             if cfg_tier and cfg_tier != "auto":
@@ -84,7 +96,6 @@ class Roulette:
                     self._current_tier = tier
 
         if self._current_tier:
-            # Buscar siguiente proveedor al MISMO tier
             next_id = self._find_next_at_tier(self._current_tier)
             if next_id:
                 eq = get_equivalent_model(next_id, self._current_tier)
@@ -93,7 +104,6 @@ class Roulette:
                     self.on_switch(next_id, reason)
                 return True
 
-            # Todos agotados en este tier — intentar bajar de nivel
             for lower_tier in self._TIER_DOWNGRADE.get(self._current_tier, []):
                 next_id = self._find_next_at_tier(lower_tier)
                 if next_id:
@@ -105,7 +115,6 @@ class Roulette:
                         self.on_switch(next_id, reason)
                     return True
         else:
-            # Sin tier — buscar siguiente disponible
             next_id = self._find_next_available()
             if next_id:
                 self._log(f"🔄 Rotando a: {PROVIDERS[next_id]['name']}")
@@ -117,7 +126,6 @@ class Roulette:
         return False
 
     def _find_next_at_tier(self, tier: str):
-        """Busca el siguiente proveedor no-agotado que tenga modelo en el tier exacto."""
         start = self.current_index
         for i in range(len(self.active_providers)):
             idx = (start + 1 + i) % len(self.active_providers)
@@ -127,15 +135,29 @@ class Roulette:
                 return pid
         return None
 
-    def _find_next_available(self):
-        """Busca el siguiente proveedor no-agotado (sin restricción de tier)."""
+    def _find_next_available(self, priority_type: str = None):
         start = self.current_index
         for i in range(len(self.active_providers)):
-            idx = (start + 1 + i) % len(self.active_providers)
+            idx = (start + i) % len(self.active_providers)
             pid = self.active_providers[idx]
-            if pid not in self._exhausted:
+            if pid in self._exhausted:
+                continue
+                
+            if priority_type == "large_context":
+                if PROVIDERS[pid].get("context_window", 0) >= 128000:
+                    self.current_index = idx
+                    return pid
+            elif priority_type == "high_speed":
+                if PROVIDERS[pid].get("speed_tier") == "high":
+                    self.current_index = idx
+                    return pid
+            elif not priority_type:
                 self.current_index = idx
                 return pid
+        
+        # Si no hay ninguno con esa prioridad, devolver el primero disponible sin filtro
+        if priority_type:
+            return self._find_next_available(priority_type=None)
         return None
 
     def reset_exhausted(self):
@@ -143,12 +165,8 @@ class Roulette:
             self._exhausted.clear()
 
     def chat_completion(self, messages: list, **kwargs) -> dict:
-        """
-        Envía una petición de chat completion rotando proveedores si falla.
-        Retorna la respuesta del proveedor o un error si todos están agotados.
-        Si stream=True en kwargs, retorna dict con '_stream' key conteniendo el generador SSE.
-        """
         is_stream = kwargs.get("stream", False)
+        priority_type = kwargs.get("priority_type")
 
         with self.lock:
             self._build_active_list()
@@ -161,12 +179,23 @@ class Roulette:
                 }
             }
 
-        # Reset tier al inicio de cada petición nueva
         self._current_tier = ""
-
         max_attempts = len(self.active_providers)
+        
         for attempt in range(max_attempts):
-            provider_id = self.get_current_provider_id()
+            # --- LÓGICA DE BACKOFF EXPONENCIAL ---
+            if attempt > 0:
+                # Espera progresiva: 1.5s, 3s, 6s... limitado a 10s máximo
+                wait_time = min(0.75 * (2 ** attempt), 10.0)
+                self._log(f"⏳ Esperando {wait_time:.1f}s (Backoff) para liberar cuota...")
+                time.sleep(wait_time)
+            # -------------------------------------
+
+            if attempt == 0 and priority_type:
+                provider_id = self._find_next_available(priority_type=priority_type)
+            else:
+                provider_id = self.get_current_provider_id()
+                
             if not provider_id:
                 break
 
@@ -178,7 +207,7 @@ class Roulette:
                     increment_stat(self.config, provider_id, "requests")
                     save_config(self.config)
                     return result
-                # Stream failed, try rotation
+                
                 status_code = result.get("_status_code", 0)
                 body = json.dumps(result)
                 if self._is_exhaustion_error(status_code, body):
@@ -187,7 +216,7 @@ class Roulette:
                     increment_stat(self.config, provider_id, "last_error", error_msg)
                     save_config(self.config)
                     with self.lock:
-                        if not self._rotate(f"Cuota/Rate limit (HTTP {status_code})"):
+                        if not self._rotate(f"Cuota/Context limit (HTTP {status_code})", priority_type=priority_type):
                             break
                 else:
                     increment_stat(self.config, provider_id, "errors")
@@ -198,7 +227,6 @@ class Roulette:
             result = self._call_provider(provider_id, prov, messages, **kwargs)
 
             if result.get("_success"):
-                # Validate response has expected structure
                 if "choices" not in result or not result.get("choices"):
                     self._log(f"⚠ {prov['name']}: respuesta sin 'choices', rotando")
                     increment_stat(self.config, provider_id, "errors")
@@ -206,25 +234,21 @@ class Roulette:
                     increment_stat(self.config, provider_id, "last_error", error_msg)
                     save_config(self.config)
                     with self.lock:
-                        if not self._rotate(f"Respuesta inválida de {prov['name']}"):
+                        if not self._rotate(f"Respuesta inválida de {prov['name']}", priority_type=priority_type):
                             break
                     continue
 
                 result.pop("_success", None)
                 result.pop("_status_code", None)
                 increment_stat(self.config, provider_id, "requests")
-                # Track token usage
                 usage = result.get("usage", {})
                 if usage:
                     pt = usage.get("prompt_tokens", 0)
                     ct = usage.get("completion_tokens", 0)
                     tt = usage.get("total_tokens", pt + ct)
-                    if pt:
-                        increment_stat(self.config, provider_id, "prompt_tokens", pt)
-                    if ct:
-                        increment_stat(self.config, provider_id, "completion_tokens", ct)
-                    if tt:
-                        increment_stat(self.config, provider_id, "total_tokens", tt)
+                    if pt: increment_stat(self.config, provider_id, "prompt_tokens", pt)
+                    if ct: increment_stat(self.config, provider_id, "completion_tokens", ct)
+                    if tt: increment_stat(self.config, provider_id, "total_tokens", tt)
                 save_config(self.config)
                 return result
 
@@ -238,10 +262,9 @@ class Roulette:
                 save_config(self.config)
 
                 with self.lock:
-                    if not self._rotate(f"Cuota/Rate limit (HTTP {status_code})"):
+                    if not self._rotate(f"Cuota/Context limit (HTTP {status_code})", priority_type=priority_type):
                         break
             else:
-                # Error no relacionado con cuota, no rotar
                 result.pop("_success", None)
                 result.pop("_status_code", None)
                 increment_stat(self.config, provider_id, "errors")
@@ -256,12 +279,9 @@ class Roulette:
         }
 
     def _resolve_model(self, provider_id: str, **kwargs) -> str:
-        """Resuelve qué modelo usar: explícito > tier de rotación > tier global > seleccionado."""
         if kwargs.get("model"):
             return kwargs["model"]
-        # Tier activo durante rotación
         tier = self._current_tier
-        # Si no hay tier de rotación, usar el global del usuario
         if not tier:
             cfg_tier = get_global_tier(self.config)
             if cfg_tier and cfg_tier != "auto":
@@ -273,11 +293,9 @@ class Roulette:
         return get_selected_model(self.config, provider_id)
 
     def _call_provider(self, provider_id: str, prov: dict, messages: list, **kwargs) -> dict:
-        """Hace la llamada HTTP al proveedor."""
         api_key = get_api_key(self.config, provider_id)
         model = self._resolve_model(provider_id, **kwargs)
 
-        # Cohere usa formato diferente
         if prov.get("custom_format") == "cohere":
             return self._call_cohere(provider_id, prov, api_key, model, messages, **kwargs)
 
@@ -291,13 +309,11 @@ class Roulette:
         payload = {
             "model": model,
             "messages": messages,
+            "stream": False
         }
-        # Pasar parámetros opcionales
         for key in ("temperature", "max_tokens", "top_p"):
             if key in kwargs and kwargs[key] is not None:
                 payload[key] = kwargs[key]
-        # Never pass stream=True to non-stream call
-        payload["stream"] = False
 
         self._log(f"→ {prov['name']} [{model}]")
 
@@ -309,27 +325,18 @@ class Roulette:
                 data = {"error": {"message": resp.text}}
             data["_status_code"] = resp.status_code
             data["_success"] = 200 <= resp.status_code < 300
-            if data["_success"] and "choices" not in data:
-                self._log(f"⚠ {prov['name']}: respuesta sin 'choices': {str(data)[:200]}")
             return data
-        except http_requests.exceptions.Timeout:
-            return {"_success": False, "_status_code": 408,
-                    "error": {"message": "Timeout de conexión"}}
-        except http_requests.exceptions.ConnectionError:
-            return {"_success": False, "_status_code": 0,
-                    "error": {"message": "Error de conexión"}}
         except Exception as e:
-            return {"_success": False, "_status_code": 0,
-                    "error": {"message": str(e)}}
+            return {"_success": False, "_status_code": 0, "error": {"message": str(e)}}
 
     def _call_provider_stream(self, provider_id: str, prov: dict, messages: list, **kwargs) -> dict:
-        """Hace la llamada HTTP con stream=True y retorna el response raw."""
         api_key = get_api_key(self.config, provider_id)
         model = self._resolve_model(provider_id, **kwargs)
 
         if prov.get("custom_format") == "cohere":
-            return {"_success": False, "_status_code": 0,
-                    "error": {"message": "Cohere no soporta streaming en Chamber"}}
+            normal_kwargs = kwargs.copy()
+            normal_kwargs["stream"] = False
+            return self._call_cohere(provider_id, prov, api_key, model, messages, **normal_kwargs)
 
         url = f"{prov['base_url']}/chat/completions"
         headers = {
@@ -353,7 +360,6 @@ class Roulette:
             resp = http_requests.post(url, json=payload, headers=headers, timeout=120, stream=True)
             if 200 <= resp.status_code < 300:
                 return {"_success": True, "_stream": resp.iter_lines(), "_raw_resp": resp}
-            # Error — read body for error detection
             try:
                 data = resp.json()
             except ValueError:
@@ -361,29 +367,14 @@ class Roulette:
             data["_status_code"] = resp.status_code
             data["_success"] = False
             return data
-        except http_requests.exceptions.Timeout:
-            return {"_success": False, "_status_code": 408,
-                    "error": {"message": "Timeout de conexión"}}
-        except http_requests.exceptions.ConnectionError:
-            return {"_success": False, "_status_code": 0,
-                    "error": {"message": "Error de conexión"}}
         except Exception as e:
-            return {"_success": False, "_status_code": 0,
-                    "error": {"message": str(e)}}
+            return {"_success": False, "_status_code": 0, "error": {"message": str(e)}}
 
     def _call_cohere(self, provider_id: str, prov: dict, api_key: str,
                      model: str, messages: list, **kwargs) -> dict:
-        """Llama a Cohere usando su formato de chat compatible con OpenAI."""
         url = f"{prov['base_url']}/chat"
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-
-        payload = {
-            "model": model,
-            "messages": messages,
-        }
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        payload = {"model": model, "messages": messages}
         for key in ("temperature", "max_tokens", "top_p"):
             if key in kwargs and kwargs[key] is not None:
                 payload[key] = kwargs[key]
@@ -392,52 +383,33 @@ class Roulette:
 
         try:
             resp = http_requests.post(url, json=payload, headers=headers, timeout=120)
-            try:
-                data = resp.json()
-            except ValueError:
-                data = {"error": {"message": resp.text}}
-
-            # Convertir respuesta Cohere v2 a formato OpenAI
+            data = resp.json()
             if 200 <= resp.status_code < 300 and "message" in data:
-                content = ""
-                msg = data.get("message", {})
-                if "content" in msg and isinstance(msg["content"], list):
-                    content = "".join(
-                        c.get("text", "") for c in msg["content"]
-                        if c.get("type") == "text"
-                    )
+                content = "".join(c.get("text", "") for c in data["message"].get("content", []) if c.get("type") == "text")
                 return {
                     "_success": True,
                     "_status_code": resp.status_code,
                     "id": data.get("id", ""),
                     "object": "chat.completion",
                     "model": model,
-                    "choices": [{
-                        "index": 0,
-                        "message": {"role": "assistant", "content": content},
-                        "finish_reason": data.get("finish_reason", "stop"),
-                    }],
+                    "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": data.get("finish_reason", "stop")}],
                     "usage": data.get("usage", {}),
                 }
-
             data["_status_code"] = resp.status_code
             data["_success"] = False
             return data
         except Exception as e:
-            return {"_success": False, "_status_code": 0,
-                    "error": {"message": str(e)}}
+            return {"_success": False, "_status_code": 0, "error": {"message": str(e)}}
 
-    def list_models(self) -> list:
-        """Retorna todos los modelos disponibles de los proveedores activos."""
+    def list_models(self, tier: str = None) -> list:
         models = []
         for pid in self.active_providers:
             prov = PROVIDERS[pid]
-            for m in prov["models"]:
-                models.append({
-                    "id": f"{pid}/{m}",
-                    "object": "model",
-                    "owned_by": prov["name"],
-                    "provider": pid,
-                    "model": m,
-                })
+            if tier:
+                eq = get_equivalent_model(pid, tier)
+                if eq:
+                    models.append({"id": f"{pid}/{eq}", "object": "model", "owned_by": prov["name"], "provider": pid, "model": eq})
+            else:
+                for m in prov["models"]:
+                    models.append({"id": f"{pid}/{m}", "object": "model", "owned_by": prov["name"], "provider": pid, "model": m})
         return models

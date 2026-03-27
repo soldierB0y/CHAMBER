@@ -23,6 +23,49 @@ def set_roulette(roulette_instance):
     _roulette = roulette_instance
 
 
+def calculate_payload_size(messages):
+    """Estima el número de tokens (caracteres / 4)."""
+    total_chars = 0
+    for m in messages:
+        content = m.get("content", "")
+        if isinstance(content, str):
+            total_chars += len(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    total_chars += len(part.get("text", ""))
+    return total_chars // 4
+
+
+def smart_crop_messages(messages, limit=10000):
+    """Truncar el centro de bloques de código grandes en mensajes de usuario."""
+    current_size = calculate_payload_size(messages)
+    if current_size <= limit:
+        return messages, False
+
+    new_messages = []
+    cropped = False
+    
+    # Intentar reducir solo mensajes de usuario con mucho contenido
+    for m in messages:
+        if m.get("role") == "user" and isinstance(m.get("content"), str):
+            content = m["content"]
+            lines = content.splitlines()
+            # Si tiene más de 300 líneas, probablemente es código o un log grande
+            if len(lines) > 300:
+                head = lines[:100]
+                tail = lines[-100:]
+                new_content = "\n".join(head) + "\n\n... [CONTENIDO OMITIDO POR TAMAÑO EXCESIVO EN CHAMBER] ...\n\n" + "\n".join(tail)
+                new_m = m.copy()
+                new_m["content"] = new_content
+                new_messages.append(new_m)
+                cropped = True
+                continue
+        new_messages.append(m)
+    
+    return new_messages, cropped
+
+
 def set_log_callback(callback):
     global _on_log
     _on_log = callback
@@ -35,7 +78,9 @@ def _log(msg):
 
 @app.route("/v1", methods=["GET"])
 @app.route("/v1/", methods=["GET"])
-def welcome():
+@app.route("/v1/<level>", methods=["GET"])
+@app.route("/v1/<level>/", methods=["GET"])
+def welcome(level=None):
     active = _roulette.get_active_count() if _roulette else 0
     current_id = _roulette.get_current_provider_id() if _roulette else ""
     status_color = "#22c55e" if _roulette else "#ef4444"
@@ -200,6 +245,23 @@ const sendBtn = document.getElementById('send-btn');
 const modelSel = document.getElementById('model-sel');
 let conversation = [];
 let sending = false;
+let typeQueue = "";
+let isTyping = false;
+let fullText = "";
+let assistantDiv = null;
+
+function typeNext() {{
+  if (typeQueue.length > 0) {{
+    const chunk = typeQueue.substring(0, 2);
+    fullText += chunk;
+    typeQueue = typeQueue.substring(2);
+    if (assistantDiv) assistantDiv.textContent = fullText;
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    setTimeout(typeNext, 12); // typist delay
+  }} else {{
+    isTyping = false;
+  }}
+}}
 
 // Auto-resize textarea
 input.addEventListener('input', () => {{
@@ -273,8 +335,10 @@ async function sendMessage() {{
       return;
     }}
 
-    const assistantDiv = addMsg('assistant', '');
-    let fullText = '';
+    assistantDiv = addMsg('assistant', '');
+    fullText = '';
+    typeQueue = '';
+    isTyping = false;
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -294,16 +358,23 @@ async function sendMessage() {{
           const obj = JSON.parse(payload);
           const delta = obj.choices?.[0]?.delta?.content;
           if (delta) {{
-            fullText += delta;
-            assistantDiv.textContent = fullText;
-            messagesEl.scrollTop = messagesEl.scrollHeight;
+            typeQueue += delta;
+            if (!isTyping) {{
+              isTyping = true;
+              typeNext();
+            }}
           }}
         }} catch(e) {{}}
       }}
     }}
-    if (fullText) {{
-      conversation.push({{role: 'assistant', content: fullText}});
-    }}
+    const checkTyping = setInterval(() => {{
+      if (!isTyping) {{
+        clearInterval(checkTyping);
+        if (fullText) {{
+          conversation.push({{role: 'assistant', content: fullText}});
+        }}
+      }}
+    }}, 100);
   }} catch(e) {{
     hideTyping();
     addMsg('error', 'Error de conexión: ' + e.message);
@@ -328,7 +399,8 @@ input.focus();
 
 
 @app.route("/v1/chat/completions", methods=["POST"])
-def chat_completions():
+@app.route("/v1/<level>/chat/completions", methods=["POST"])
+def chat_completions(level=None):
     if not _roulette:
         return jsonify({"error": {"message": "Roulette no inicializada"}}), 500
 
@@ -344,12 +416,28 @@ def chat_completions():
         stream_enabled = bool(data["stream"])
     else:
         stream_enabled = _roulette.config.get("stream_enabled", False) if _roulette else False
+    # Lógica de Pre-Procesamiento de Contexto
+    token_count = calculate_payload_size(messages)
+    priority_type = None
+
+    if token_count > 10000:
+        messages, was_cropped = smart_crop_messages(messages, limit=10000)
+        if was_cropped:
+            _log(f"✂ Contexto truncado (Smart Crop) para ajustar a límites")
+        priority_type = "large_context"
+    elif token_count < 2000:
+        priority_type = "high_speed"
+
     kwargs = {
         "temperature": data.get("temperature"),
         "max_tokens": data.get("max_tokens"),
         "top_p": data.get("top_p"),
         "stream": stream_enabled,
+        "priority_type": priority_type
     }
+
+    if level:
+        kwargs["tier"] = level
 
     # Si el modelo es "provider_id/model_name", seleccionar ese proveedor
     if model and "/" in model:
@@ -384,6 +472,45 @@ def chat_completions():
             }
         )
 
+    # Fake stream (Typist Mode) para proveedores que no soportan streaming pero el cliente lo pidió
+    if stream_enabled and "choices" in result and result.get("choices"):
+        def generate_fake():
+            import time, json, uuid
+            content = result["choices"][0].get("message", {}).get("content", "")
+            resp_id = result.get("id", f"chatcmpl-{uuid.uuid4().hex}")
+            model_id = result.get("model", "chamber-proxy")
+            
+            chunk_size = 4
+            for i in range(0, len(content), chunk_size):
+                chunk = content[i:i+chunk_size]
+                payload = {
+                    "id": resp_id,
+                    "object": "chat.completion.chunk",
+                    "model": model_id,
+                    "choices": [{"delta": {"content": chunk}, "index": 0, "finish_reason": None}]
+                }
+                yield f"data: {json.dumps(payload)}\n\n"
+                time.sleep(0.015)  # typist mode delay
+                
+            stop_payload = {
+                "id": resp_id,
+                "object": "chat.completion.chunk",
+                "model": model_id,
+                "choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}]
+            }
+            yield f"data: {json.dumps(stop_payload)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return Response(
+            generate_fake(),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Access-Control-Allow-Origin": "*",
+            }
+        )
+
     if "choices" not in result or not result.get("choices"):
         return jsonify(result), 502
 
@@ -391,17 +518,20 @@ def chat_completions():
 
 
 @app.route("/v1/models", methods=["GET"])
-def list_models():
+@app.route("/v1/<level>/models", methods=["GET"])
+def list_models(level=None):
     if not _roulette:
         return jsonify({"data": [], "object": "list"}), 200
 
-    models = _roulette.list_models()
+    models = _roulette.list_models(tier=level)
     return jsonify({"data": models, "object": "list"})
 
 
 @app.route("/v1/chat/completions", methods=["OPTIONS"])
+@app.route("/v1/<level>/chat/completions", methods=["OPTIONS"])
 @app.route("/v1/models", methods=["OPTIONS"])
-def options():
+@app.route("/v1/<level>/models", methods=["OPTIONS"])
+def options(level=None):
     return "", 204
 
 
@@ -469,4 +599,5 @@ class APIServer:
         self.running = False
         if hasattr(self, "_server") and self._server:
             self._server.shutdown()
+            self._server.server_close()
         set_roulette(None)

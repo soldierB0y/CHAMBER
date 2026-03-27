@@ -29,6 +29,8 @@ PROVIDERS = {
         "limits": "20 req/min, 50 req/day (200 con topup)",
         "signup_url": "https://openrouter.ai/",
         "notes": "Modelos con sufijo :free son gratuitos",
+        "context_window": 128000,
+        "speed_tier": "medium",
     },
     "groq": {
         "name": "Groq",
@@ -48,6 +50,8 @@ PROVIDERS = {
         "limits": "1,000-14,400 req/day según modelo",
         "signup_url": "https://console.groq.com/",
         "notes": "Muy rápido (hardware Groq LPU)",
+        "context_window": 32768,
+        "speed_tier": "high",
     },
     "cerebras": {
         "name": "Cerebras",
@@ -63,6 +67,8 @@ PROVIDERS = {
         "limits": "30 req/min, 14,400 req/day",
         "signup_url": "https://cloud.cerebras.ai/",
         "notes": "Inferencia ultra rápida",
+        "context_window": 8192,
+        "speed_tier": "high",
     },
     "cohere": {
         "name": "Cohere",
@@ -83,6 +89,8 @@ PROVIDERS = {
         "notes": "API compatible con OpenAI en v2",
         "chat_endpoint": "/chat",
         "custom_format": "cohere",
+        "context_window": 128000,
+        "speed_tier": "medium",
     },
     "github_models": {
         "name": "GitHub Models",
@@ -102,6 +110,8 @@ PROVIDERS = {
         "limits": "Depende del tier de GitHub Copilot",
         "signup_url": "https://github.com/marketplace/models",
         "notes": "Usar GitHub PAT como API key",
+        "context_window": 128000,
+        "speed_tier": "medium",
     },
     "mistral": {
         "name": "Mistral AI",
@@ -119,6 +129,8 @@ PROVIDERS = {
         "limits": "1 req/s, 500K tokens/min",
         "signup_url": "https://console.mistral.ai/",
         "notes": "Plan Experiment gratis (requiere verificación tel.)",
+        "context_window": 128000,
+        "speed_tier": "medium",
     },
     "google_ai": {
         "name": "Google AI Studio",
@@ -136,6 +148,8 @@ PROVIDERS = {
         "limits": "Varía por modelo, 15-500 req/day",
         "signup_url": "https://aistudio.google.com/",
         "notes": "Compatible OpenAI vía endpoint /v1beta/openai",
+        "context_window": 128000,
+        "speed_tier": "medium",
     },
     "nvidia_nim": {
         "name": "NVIDIA NIM",
@@ -153,6 +167,8 @@ PROVIDERS = {
         "limits": "40 req/min",
         "signup_url": "https://build.nvidia.com/explore/discover",
         "notes": "Requiere verificación telefónica",
+        "context_window": 32768,
+        "speed_tier": "medium",
     },
     "sambanova": {
         "name": "SambaNova",
@@ -170,6 +186,8 @@ PROVIDERS = {
         "limits": "$5 créditos por 3 meses",
         "signup_url": "https://cloud.sambanova.ai/",
         "notes": "Créditos de prueba $5",
+        "context_window": 32768,
+        "speed_tier": "high",
     },
     "hyperbolic": {
         "name": "Hyperbolic",
@@ -187,6 +205,8 @@ PROVIDERS = {
         "limits": "$1 créditos de prueba",
         "signup_url": "https://app.hyperbolic.ai/",
         "notes": "Créditos de prueba $1",
+        "context_window": 32768,
+        "speed_tier": "high",
     },
     "fireworks": {
         "name": "Fireworks AI",
@@ -203,6 +223,8 @@ PROVIDERS = {
         "limits": "$1 créditos de prueba",
         "signup_url": "https://fireworks.ai/",
         "notes": "Créditos de prueba $1",
+        "context_window": 32768,
+        "speed_tier": "medium",
     },
     "nebius": {
         "name": "Nebius",
@@ -219,6 +241,8 @@ PROVIDERS = {
         "limits": "$1 créditos de prueba",
         "signup_url": "https://tokenfactory.nebius.com/",
         "notes": "Créditos de prueba $1",
+        "context_window": 32768,
+        "speed_tier": "medium",
     },
 }
 
@@ -294,10 +318,13 @@ EXHAUSTION_ERRORS = [
     "credits",
     "exhausted",
     "capacity",
+    "context_length_exceeded",
+    "context_window",
+    "too long",
 ]
 
-# HTTP status codes que indican agotamiento
-EXHAUSTION_STATUS_CODES = [429, 402, 403, 503]
+# HTTP status codes que indican agotamiento o rechazo por tamaño
+EXHAUSTION_STATUS_CODES = [429, 413, 402, 403, 503]
 
 
 def _parse_rate_headers(headers: dict) -> list:

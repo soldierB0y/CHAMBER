@@ -534,14 +534,15 @@ class ChamberApp(ctk.CTk):
 
         # System prompt frame (created now, shown/hidden on toggle)
         self.system_frame = ctk.CTkFrame(chat_area, fg_color=C["card"], corner_radius=10)
-        self.system_entry = ctk.CTkEntry(
-            self.system_frame, height=34,
-            placeholder_text="System prompt (opcional)...",
+        self.system_entry = ctk.CTkTextbox(
+            self.system_frame, height=80,
             font=ctk.CTkFont(size=12),
             fg_color=C["input_bg"], border_color=C["border"],
-            text_color=C["text"], corner_radius=8
+            text_color=C["text"], corner_radius=8, wrap="word"
         )
-        self.system_entry.insert(0, self.config_data.get("system_prompt", ""))
+        _sys_prompt = self.config_data.get("system_prompt", "")
+        if _sys_prompt:
+            self.system_entry.insert("1.0", _sys_prompt)
         self.system_entry.pack(fill="x", padx=10, pady=8)
 
         self.chat_input = ctk.CTkEntry(
@@ -624,7 +625,7 @@ class ChamberApp(ctk.CTk):
         api_messages = []
         sys_text = ""
         if hasattr(self, "system_entry"):
-            sys_text = self.system_entry.get().strip()
+            sys_text = self.system_entry.get("1.0", "end").strip()
         if sys_text:
             api_messages.append({"role": "system", "content": sys_text})
         api_messages.extend(
@@ -651,7 +652,7 @@ class ChamberApp(ctk.CTk):
                     self.chat_messages.append(
                         {"role": "assistant", "content": content, "provider_tag": tag}
                     )
-                    self._persist_chat_state()
+                    self._persist_chat_state(_from_thread=True)
                     self.after(0, lambda c=content, t=tag: self._chat_append_assistant(c, t))
             except Exception as e:
                 if self._closing:
@@ -836,10 +837,13 @@ class ChamberApp(ctk.CTk):
                 )
                 del_btn.pack(side="right", padx=(0, 4), pady=4)
 
-    def _persist_chat_state(self):
+    def _persist_chat_state(self, _from_thread=False):
         self._save_conversations()
+        if _from_thread:
+            save_config(self.config_data)
+            return
         if hasattr(self, "system_entry"):
-            self.config_data["system_prompt"] = self.system_entry.get().strip()
+            self.config_data["system_prompt"] = self.system_entry.get("1.0", "end").strip()
             save_config(self.config_data)
 
     def _render_chat_history(self):
@@ -1842,12 +1846,22 @@ class ChamberApp(ctk.CTk):
         )
         self._gadget_tokens.pack(side="left", padx=(16, 0))
 
-        # Mini chatbot
-        chat_frame = ctk.CTkFrame(container, fg_color="transparent")
-        chat_frame.pack(fill="both", expand=True, padx=12, pady=(4, 4))
+        # Pestañas del Gadget (Chat / Logs)
+        self._gadget_tabs = ctk.CTkTabview(
+            container, height=220, fg_color="transparent",
+            segmented_button_selected_color=C["accent"],
+            segmented_button_selected_hover_color=C["accent_hover"],
+            segmented_button_unselected_color=C["input_bg"],
+            corner_radius=12
+        )
+        self._gadget_tabs.pack(fill="both", expand=True, padx=10, pady=(0, 4))
+        
+        tab_chat = self._gadget_tabs.add("Chat")
+        tab_logs = self._gadget_tabs.add("Logs")
 
+        # --- Pestaña Chat ---
         self._gadget_chat_box = ctk.CTkTextbox(
-            chat_frame,
+            tab_chat,
             font=ctk.CTkFont(size=11),
             fg_color=C["input_bg"], text_color=C["text"],
             corner_radius=8, border_width=1, border_color=C["border"],
@@ -1857,7 +1871,7 @@ class ChamberApp(ctk.CTk):
         self._gadget_chat_box.configure(state="disabled")
         self._render_gadget_chat_history()
 
-        gadget_input_row = ctk.CTkFrame(chat_frame, fg_color="transparent")
+        gadget_input_row = ctk.CTkFrame(tab_chat, fg_color="transparent")
         gadget_input_row.pack(fill="x", pady=(6, 0))
 
         self._gadget_chat_input = ctk.CTkEntry(
@@ -1872,13 +1886,30 @@ class ChamberApp(ctk.CTk):
         self._gadget_chat_input.bind("<Return>", lambda e: self._send_gadget_message())
 
         self._gadget_send_btn = ctk.CTkButton(
-            gadget_input_row, text="Enviar", width=62, height=32,
-            font=ctk.CTkFont(size=11, weight="bold"),
+            gadget_input_row, text="➤", width=36, height=32,
+            font=ctk.CTkFont(size=13, weight="bold"),
             fg_color=C["accent"], hover_color=C["accent_hover"],
             text_color="#fff", corner_radius=8,
             command=self._send_gadget_message
         )
         self._gadget_send_btn.pack(side="left", padx=(6, 0))
+
+        # --- Pestaña Logs ---
+        self._gadget_log_box = ctk.CTkTextbox(
+            tab_logs,
+            font=ctk.CTkFont(family="Cascadia Code, Consolas, monospace", size=10),
+            fg_color=C["input_bg"], text_color=C["text"],
+            corner_radius=8, border_width=1, border_color=C["border"],
+            state="disabled", wrap="none"
+        )
+        self._gadget_log_box.pack(fill="both", expand=True)
+        
+        # Cargar logs actuales
+        self._gadget_log_box.configure(state="normal")
+        for line in self.log_lines:
+            self._gadget_log_box.insert("end", line)
+        self._gadget_log_box.see("end")
+        self._gadget_log_box.configure(state="disabled")
 
         # Bottom bar with quick actions
         bottom = ctk.CTkFrame(container, fg_color="transparent")
@@ -2091,10 +2122,18 @@ class ChamberApp(ctk.CTk):
             self.log_lines = self.log_lines[-400:]
 
         def _update():
-            self.log_text.configure(state="normal")
-            self.log_text.insert("end", line)
-            self.log_text.see("end")
-            self.log_text.configure(state="disabled")
+            if hasattr(self, "log_text") and self.log_text.winfo_exists():
+                self.log_text.configure(state="normal")
+                self.log_text.insert("end", line)
+                self.log_text.see("end")
+                self.log_text.configure(state="disabled")
+            
+            if self.gadget_window and hasattr(self, "_gadget_log_box") and self._gadget_log_box.winfo_exists():
+                self._gadget_log_box.configure(state="normal")
+                self._gadget_log_box.insert("end", line)
+                self._gadget_log_box.see("end")
+                self._gadget_log_box.configure(state="disabled")
+
         self.after(0, _update)
 
     def _clear_log(self):
@@ -2154,7 +2193,7 @@ class ChamberApp(ctk.CTk):
         if port.isdigit():
             self.config_data["server_port"] = int(port)
         if hasattr(self, "system_entry"):
-            self.config_data["system_prompt"] = self.system_entry.get().strip()
+            self.config_data["system_prompt"] = self.system_entry.get("1.0", "end").strip()
         self._save_conversations()
 
         save_config(self.config_data)
@@ -2300,12 +2339,20 @@ class ChamberApp(ctk.CTk):
                 self.gadget_window.destroy()
         except Exception:
             pass
-        try:
-            if self.api_server:
-                self.api_server.stop()
-        except Exception:
-            pass
+        # Stop server in background thread to avoid blocking on active streaming requests
+        if self.api_server:
+            t = threading.Thread(target=self._safe_stop_server, daemon=True)
+            t.start()
+            t.join(timeout=3)
         try:
             self.destroy()
+        except Exception:
+            pass
+        # Force exit to ensure all threads are cleaned up
+        os._exit(0)
+
+    def _safe_stop_server(self):
+        try:
+            self.api_server.stop()
         except Exception:
             pass
