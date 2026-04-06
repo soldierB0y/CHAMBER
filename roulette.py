@@ -20,10 +20,39 @@ from config import (
     get_global_tier, increment_stat, save_config
 )
 
+L10N = {
+    "es": {
+        "rotating_priority": "🔄 Rotando por prioridad '{p}': {n}",
+        "rotating_to": "🔄 Rotando a: {n} [{m}] (tier: {t})",
+        "rotating_to_simple": "🔄 Rotando a: {n}",
+        "exhausted_tier": "⚠ Todos los proveedores agotados en tier '{t}'",
+        "downgrading": "⬇ Bajando a tier '{t}': {n} [{m}]",
+        "all_exhausted": "❌ Todos los proveedores agotados",
+        "waiting_backoff": "⏳ Esperando {s:.1f}s (Backoff) para liberar cuota...",
+        "invalid_resp": "⚠ {n}: respuesta sin 'choices', rotando",
+        "no_providers": "No hay proveedores configurados y habilitados",
+        "quota_exhausted": "Todos los proveedores están agotados. Intenta más tarde o agrega más proveedores.",
+    },
+    "en": {
+        "rotating_priority": "🔄 Rotating by priority '{p}': {n}",
+        "rotating_to": "🔄 Rotating to: {n} [{m}] (tier: {t})",
+        "rotating_to_simple": "🔄 Rotating to: {n}",
+        "exhausted_tier": "⚠ All providers exhausted in tier '{t}'",
+        "downgrading": "⬇ Downgrading to tier '{t}': {n} [{m}]",
+        "all_exhausted": "❌ All providers exhausted",
+        "waiting_backoff": "⏳ Waiting {s:.1f}s (Backoff) to free quota...",
+        "invalid_resp": "⚠ {n}: response without 'choices', rotating",
+        "no_providers": "No providers configured and enabled",
+        "quota_exhausted": "All providers are exhausted. Try later or add more providers.",
+    }
+}
+
 
 class Roulette:
     def __init__(self, config: dict, on_switch=None, on_log=None):
         self.config = config
+        self.lang = config.get("language", "es")
+        if self.lang not in L10N: self.lang = "es"
         self.lock = threading.Lock()
         self.current_index = 0
         self.on_switch = on_switch  # callback(provider_id, reason)
@@ -31,6 +60,9 @@ class Roulette:
         self._exhausted = set()     # proveedores agotados en esta sesión
         self._current_tier = ""      # tier activo durante rotación
         self._build_active_list()
+
+    def _t(self, key, **kwargs):
+        return L10N.get(self.lang, L10N["es"]).get(key, key).format(**kwargs)
 
     def _build_active_list(self):
         """Construye la lista de proveedores activos (con key + habilitados)."""
@@ -80,7 +112,7 @@ class Roulette:
         if priority_type:
             next_id = self._find_next_available(priority_type=priority_type)
             if next_id:
-                self._log(f"🔄 Rotando por prioridad '{priority_type}': {PROVIDERS[next_id]['name']}")
+                self._log(self._t("rotating_priority", p=priority_type, n=PROVIDERS[next_id]['name']))
                 if self.on_switch:
                     self.on_switch(next_id, reason)
                 return True
@@ -99,7 +131,7 @@ class Roulette:
             next_id = self._find_next_at_tier(self._current_tier)
             if next_id:
                 eq = get_equivalent_model(next_id, self._current_tier)
-                self._log(f"🔄 Rotando a: {PROVIDERS[next_id]['name']} [{eq}] (tier: {self._current_tier})")
+                self._log(self._t("rotating_to", n=PROVIDERS[next_id]['name'], m=eq, t=self._current_tier))
                 if self.on_switch:
                     self.on_switch(next_id, reason)
                 return True
@@ -108,8 +140,8 @@ class Roulette:
                 next_id = self._find_next_at_tier(lower_tier)
                 if next_id:
                     eq = get_equivalent_model(next_id, lower_tier)
-                    self._log(f"⚠ Todos los proveedores agotados en tier '{self._current_tier}'")
-                    self._log(f"⬇ Bajando a tier '{lower_tier}': {PROVIDERS[next_id]['name']} [{eq}]")
+                    self._log(self._t("exhausted_tier", t=self._current_tier))
+                    self._log(self._t("downgrading", t=lower_tier, n=PROVIDERS[next_id]['name'], m=eq))
                     self._current_tier = lower_tier
                     if self.on_switch:
                         self.on_switch(next_id, reason)
@@ -117,12 +149,12 @@ class Roulette:
         else:
             next_id = self._find_next_available()
             if next_id:
-                self._log(f"🔄 Rotando a: {PROVIDERS[next_id]['name']}")
+                self._log(self._t("rotating_to_simple", n=PROVIDERS[next_id]['name']))
                 if self.on_switch:
                     self.on_switch(next_id, reason)
                 return True
 
-        self._log("❌ Todos los proveedores agotados")
+        self._log(self._t("all_exhausted"))
         return False
 
     def _find_next_at_tier(self, tier: str):
@@ -174,7 +206,7 @@ class Roulette:
         if not self.active_providers:
             return {
                 "error": {
-                    "message": "No hay proveedores configurados y habilitados",
+                    "message": self._t("no_providers"),
                     "type": "no_providers",
                 }
             }
@@ -187,7 +219,7 @@ class Roulette:
             if attempt > 0:
                 # Espera progresiva: 1.5s, 3s, 6s... limitado a 10s máximo
                 wait_time = min(0.75 * (2 ** attempt), 10.0)
-                self._log(f"⏳ Esperando {wait_time:.1f}s (Backoff) para liberar cuota...")
+                self._log(self._t("waiting_backoff", s=wait_time))
                 time.sleep(wait_time)
             # -------------------------------------
 
@@ -228,7 +260,7 @@ class Roulette:
 
             if result.get("_success"):
                 if "choices" not in result or not result.get("choices"):
-                    self._log(f"⚠ {prov['name']}: respuesta sin 'choices', rotando")
+                    self._log(self._t("invalid_resp", n=prov['name']))
                     increment_stat(self.config, provider_id, "errors")
                     error_msg = result.get("error", {}).get("message", "Respuesta inválida")
                     increment_stat(self.config, provider_id, "last_error", error_msg)
@@ -273,7 +305,7 @@ class Roulette:
 
         return {
             "error": {
-                "message": "Todos los proveedores están agotados. Intenta más tarde o agrega más proveedores.",
+                "message": self._t("quota_exhausted"),
                 "type": "all_exhausted",
             }
         }
@@ -321,6 +353,8 @@ class Roulette:
             resp = http_requests.post(url, json=payload, headers=headers, timeout=120)
             try:
                 data = resp.json()
+                if isinstance(data, list):
+                    data = {"data": data}
             except ValueError:
                 data = {"error": {"message": resp.text}}
             data["_status_code"] = resp.status_code
@@ -362,6 +396,8 @@ class Roulette:
                 return {"_success": True, "_stream": resp.iter_lines(), "_raw_resp": resp}
             try:
                 data = resp.json()
+                if isinstance(data, list):
+                    data = {"data": data}
             except ValueError:
                 data = {"error": {"message": resp.text}}
             data["_status_code"] = resp.status_code
@@ -383,7 +419,13 @@ class Roulette:
 
         try:
             resp = http_requests.post(url, json=payload, headers=headers, timeout=120)
-            data = resp.json()
+            try:
+                data = resp.json()
+                if isinstance(data, list):
+                    data = {"data": data}
+            except ValueError:
+                data = {"error": {"message": resp.text}}
+
             if 200 <= resp.status_code < 300 and "message" in data:
                 content = "".join(c.get("text", "") for c in data["message"].get("content", []) if c.get("type") == "text")
                 return {

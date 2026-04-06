@@ -102,6 +102,9 @@ I18N = {
         "info_example_curl": "Ejemplo — curl",
         "info_compatible": "Compatible con",
         "info_compatible_any": "·  Cualquier cliente OpenAI",
+        "you_speaker": "Tú",
+        "ai_speaker": "AI",
+        "normal_mode": "Modo Normal",
     },
     "en": {
         "subtitle": "Maximize your free tokens",
@@ -154,6 +157,9 @@ I18N = {
         "info_example_curl": "Example — curl",
         "info_compatible": "Compatible with",
         "info_compatible_any": "·  Any OpenAI client",
+        "you_speaker": "You",
+        "ai_speaker": "AI",
+        "normal_mode": "Normal Mode",
     },
 }
 
@@ -387,6 +393,16 @@ class ChamberApp(ctk.CTk):
             state="disabled", command=self._stop_server
         )
         self.stop_btn.pack(fill="x", padx=16, pady=4)
+
+        # Gadget toggle button
+        self.sidebar_gadget_btn = ctk.CTkButton(
+            sb, text=self._t("gadget_mode"), height=42,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=C["card"], hover_color=C["card_hover"],
+            text_color=C["accent"], corner_radius=10,
+            command=self._toggle_gadget
+        )
+        self.sidebar_gadget_btn.pack(fill="x", padx=16, pady=4)
 
         # Divider
         ctk.CTkFrame(sb, height=1, fg_color=C["border"]).pack(fill="x", padx=16, pady=8)
@@ -668,19 +684,42 @@ class ChamberApp(ctk.CTk):
     def _chat_append_user(self, text):
         self.chat_display.configure(state="normal")
         self.chat_display._textbox.insert("end", "Tú\n", "user_name")
-        self.chat_display.insert("end", f"{text}\n\n")
+        self._insert_with_markdown(self.chat_display, f"{text}\n\n")
         self.chat_display.see("end")
         self.chat_display.configure(state="disabled")
 
     def _chat_append_assistant(self, text, provider_tag=""):
         self.chat_display.configure(state="normal")
-        self.chat_display._textbox.insert("end", "AI", "assistant_name")
+        header = "AI"
         if provider_tag:
-            self.chat_display._textbox.insert("end", f"  [{provider_tag}]", "provider_tag")
-        self.chat_display._textbox.insert("end", "\n")
-        self.chat_display.insert("end", f"{text}\n\n")
+            # Clean up tag if it contains the full path or something ugly
+            tag = provider_tag.split("·")[-1].strip() if "·" in provider_tag else provider_tag
+            header = f"AI [{tag}]"
+        
+        self.chat_display._textbox.insert("end", f"{header}\n", "assistant_name")
+        self._insert_with_markdown(self.chat_display, f"{text}\n\n")
         self.chat_display.see("end")
         self.chat_display.configure(state="disabled")
+
+    def _insert_with_markdown(self, widget, text):
+        """Simple bold parser for **text**."""
+        import re
+        # Basic tag configuration for bold (only once)
+        if "bold" not in widget._textbox.tag_names():
+            # Safer font specification for bold
+            try:
+                # Use a string-based spec or just bold weight
+                widget._textbox.tag_configure("bold", font=("Segoe UI", 11, "bold"))
+            except:
+                # Fallback
+                widget._textbox.tag_configure("bold", font="TkDefaultFont 11 bold")
+        
+        parts = re.split(r"(\*\*.*?\*\*)", text)
+        for part in parts:
+            if part.startswith("**") and part.endswith("**"):
+                widget._textbox.insert("end", part[2:-2], "bold")
+            else:
+                widget._textbox.insert("end", part)
 
     def _chat_append_system(self, text):
         self.chat_display.configure(state="normal")
@@ -1737,8 +1776,9 @@ class ChamberApp(ctk.CTk):
         self.gadget_mode = True
         gw = ctk.CTkToplevel(self)
         gw.title("Chamber")
-        gw.geometry("350x420")
-        gw.resizable(False, False)
+        gw.geometry("380x520")
+        gw.resizable(True, True)
+        gw.minsize(320, 450)
         gw.attributes("-topmost", True)
         gw.configure(fg_color=C["bg"])
         gw.overrideredirect(True)  # Borderless
@@ -1848,7 +1888,7 @@ class ChamberApp(ctk.CTk):
 
         # Pestañas del Gadget (Chat / Logs)
         self._gadget_tabs = ctk.CTkTabview(
-            container, height=220, fg_color="transparent",
+            container, height=280, fg_color="transparent",
             segmented_button_selected_color=C["accent"],
             segmented_button_selected_hover_color=C["accent_hover"],
             segmented_button_unselected_color=C["input_bg"],
@@ -1856,8 +1896,10 @@ class ChamberApp(ctk.CTk):
         )
         self._gadget_tabs.pack(fill="both", expand=True, padx=10, pady=(0, 4))
         
-        tab_chat = self._gadget_tabs.add("Chat")
-        tab_logs = self._gadget_tabs.add("Logs")
+        tab_chat_name = "Chat" if self.language == "es" else "Chat"
+        tab_logs_name = "Logs" if self.language == "es" else "Logs"
+        tab_chat = self._gadget_tabs.add(tab_chat_name)
+        tab_logs = self._gadget_tabs.add(tab_logs_name)
 
         # --- Pestaña Chat ---
         self._gadget_chat_box = ctk.CTkTextbox(
@@ -1893,6 +1935,37 @@ class ChamberApp(ctk.CTk):
             command=self._send_gadget_message
         )
         self._gadget_send_btn.pack(side="left", padx=(6, 0))
+
+        # --- Gadget System Prompt ---
+        self._gadget_system_visible = False
+        self._gadget_system_frame = ctk.CTkFrame(tab_chat, fg_color=C["card"], corner_radius=10)
+        # We don't pack it yet
+        
+        self._gadget_system_entry = ctk.CTkTextbox(
+            self._gadget_system_frame, height=60,
+            font=ctk.CTkFont(size=10),
+            fg_color=C["input_bg"], border_color=C["border"],
+            text_color=C["text"], corner_radius=8, wrap="word"
+        )
+        # Load from config or main entry
+        current_sys = ""
+        if hasattr(self, "system_entry"):
+            current_sys = self.system_entry.get("1.0", "end").strip()
+        else:
+            current_sys = self.config_data.get("system_prompt", "")
+            
+        self._gadget_system_entry.insert("1.0", current_sys)
+        self._gadget_system_entry.pack(fill="x", padx=8, pady=6)
+
+        # Add Sys button to gadget input row
+        self._gadget_sys_btn = ctk.CTkButton(
+            gadget_input_row, text="Sys", width=36, height=32,
+            font=ctk.CTkFont(size=10),
+            fg_color="transparent", hover_color=C["card_hover"],
+            text_color=C["text_muted"], corner_radius=8,
+            command=self._toggle_gadget_system_prompt
+        )
+        self._gadget_sys_btn.pack(side="right", padx=(4, 0))
 
         # --- Pestaña Logs ---
         self._gadget_log_box = ctk.CTkTextbox(
@@ -1930,9 +2003,27 @@ class ChamberApp(ctk.CTk):
             command=self._stop_server
         ).pack(side="left")
 
+        ctk.CTkButton(
+            bottom, text=self._t("normal_mode"), height=28,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color=C["card"], hover_color=C["card_hover"],
+            text_color=C["accent"], corner_radius=6,
+            command=self._exit_gadget_mode
+        ).pack(side="right")
+
         self.gadget_window = gw
         self.withdraw()
         self._update_gadget()
+
+    def _toggle_gadget_system_prompt(self):
+        if self._gadget_system_visible:
+            self._gadget_system_frame.pack_forget()
+            self._gadget_sys_btn.configure(text_color=C["text_muted"])
+        else:
+            # Pack after chat box
+            self._gadget_system_frame.pack(fill="x", pady=(4, 0), after=self._gadget_chat_box)
+            self._gadget_sys_btn.configure(text_color=C["accent"])
+        self._gadget_system_visible = not self._gadget_system_visible
 
     def _exit_gadget_mode(self):
         """Close gadget and restore normal window."""
@@ -1982,7 +2073,9 @@ class ChamberApp(ctk.CTk):
         if not self.gadget_window or not self.gadget_window.winfo_exists():
             return
         self._gadget_chat_box.configure(state="normal")
-        self._gadget_chat_box.insert("end", f"{speaker}: {text}\n\n")
+        name_tag = "user_name" if speaker == self._t("you_speaker") else ("assistant_name" if speaker == self._t("ai_speaker") else "system_msg")
+        self._gadget_chat_box._textbox.insert("end", f"{speaker}\n", name_tag)
+        self._insert_with_markdown(self._gadget_chat_box, f"{text}\n\n")
         self._gadget_chat_box.see("end")
         self._gadget_chat_box.configure(state="disabled")
 
@@ -2017,11 +2110,27 @@ class ChamberApp(ctk.CTk):
         self._persist_chat_state()
         self._append_gadget_chat("Tu", text)
 
-        payload_messages = [
+        payload_messages = []
+        
+        # Get system prompt from gadget entry if visible/available, otherwise from config
+        sys_text = ""
+        if hasattr(self, "_gadget_system_entry"):
+            sys_text = self._gadget_system_entry.get("1.0", "end").strip()
+        elif hasattr(self, "system_entry"):
+            sys_text = self.system_entry.get("1.0", "end").strip()
+        else:
+            sys_text = self.config_data.get("system_prompt", "")
+
+        if sys_text:
+            payload_messages.append({"role": "system", "content": sys_text})
+            # Also update main config so it persists
+            self.config_data["system_prompt"] = sys_text
+
+        payload_messages.extend([
             {"role": msg.get("role", "user"), "content": msg.get("content", "")}
             for msg in self.chat_messages
             if msg.get("role") in ("user", "assistant")
-        ]
+        ])
 
         def do_request():
             try:
@@ -2045,10 +2154,12 @@ class ChamberApp(ctk.CTk):
             except Exception as e:
                 if self._closing:
                     return
-                self.after(0, lambda err=e: self._append_gadget_chat("Sistema", f"Error: {err}"))
+                sys_lbl = "Sistema" if self.language == "es" else "System"
+                self.after(0, lambda err=e: self._append_gadget_chat(sys_lbl, f"Error: {err}"))
             finally:
                 if not self._closing:
-                    self.after(0, lambda: self._gadget_send_btn.configure(state="normal", text="Enviar"))
+                    btn_text = "Enviar" if self.language == "es" else "Send"
+                    self.after(0, lambda: self._gadget_send_btn.configure(state="normal", text=btn_text))
 
         threading.Thread(target=do_request, daemon=True).start()
 
@@ -2087,11 +2198,17 @@ class ChamberApp(ctk.CTk):
         )
         self.api_server.start()
 
-        self._append_log(f"Servidor iniciado — http://localhost:{port}/v1")
-        self._append_log(f"Proveedores activos: {self.roulette.get_active_count()}")
+        msg = f"Servidor iniciado — http://localhost:{port}/v1" if self.language == "es" else f"Server started — http://localhost:{port}/v1"
+        self._append_log(msg)
+        
+        count_msg = f"Proveedores activos: {self.roulette.get_active_count()}" if self.language == "es" else f"Active providers: {self.roulette.get_active_count()}"
+        self._append_log(count_msg)
+        
         current = self.roulette.get_current_provider_id()
         if current:
-            self._append_log(f"Proveedor actual: {PROVIDERS[current]['name']}")
+            name = PROVIDERS[current]['name']
+            prov_msg = f"Proveedor actual: {name}" if self.language == "es" else f"Current provider: {name}"
+            self._append_log(prov_msg)
 
         self.start_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
@@ -2100,7 +2217,8 @@ class ChamberApp(ctk.CTk):
     def _stop_server(self):
         if self.api_server:
             self.api_server.stop()
-        self._append_log("Servidor detenido")
+        msg = "Servidor detenido" if self.language == "es" else "Server stopped"
+        self._append_log(msg)
         self.start_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
         self.roulette = None

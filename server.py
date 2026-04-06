@@ -423,7 +423,9 @@ def chat_completions(level=None):
     if token_count > 10000:
         messages, was_cropped = smart_crop_messages(messages, limit=10000)
         if was_cropped:
-            _log(f"✂ Contexto truncado (Smart Crop) para ajustar a límites")
+            lang = _roulette.lang if _roulette else "es"
+            msg = "✂ Contexto truncado (Smart Crop)" if lang == "es" else "✂ Context truncated (Smart Crop)"
+            _log(msg)
         priority_type = "large_context"
     elif token_count < 2000:
         priority_type = "high_speed"
@@ -591,8 +593,13 @@ class APIServer:
         from werkzeug.serving import make_server
         self._server = make_server(self.host, self.port, app)
         lan_ip = _get_lan_ip()
-        _log(f"🚀 Servidor API iniciado — http://localhost:{self.port}/v1")
-        _log(f"🌐 Red local — http://{lan_ip}:{self.port}/v1")
+        lang = self.roulette.lang if self.roulette else "es"
+        if lang == "es":
+            _log(f"🚀 Servidor API iniciado — http://localhost:{self.port}/v1")
+            _log(f"🌐 Red local — http://{lan_ip}:{self.port}/v1")
+        else:
+            _log(f"🚀 API Server started — http://localhost:{self.port}/v1")
+            _log(f"🌐 Local network — http://{lan_ip}:{self.port}/v1")
         self._server.serve_forever()
 
     def stop(self):
